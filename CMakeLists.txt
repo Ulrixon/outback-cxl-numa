@@ -102,3 +102,19 @@ set_target_properties(server PROPERTIES RUNTIME_OUTPUT_DIRECTORY ./benchs/outbac
 
 target_link_libraries(client ${LOG_LIBRARIES})
 target_link_libraries(server ${LOG_LIBRARIES})
+
+
+
+########### outback NUMA (no RDMA) ###########
+
+file(GLOB client_numa_SOURCES ""  "./benchs/outback/client_numa.cc"  "./deps/ludo/hashutils/*.cc" ${LOG_SRC})
+file(GLOB server_numa_SOURCES ""  "./benchs/outback/server_numa.cc"  "./deps/ludo/hashutils/*.cc" ${LOG_SRC})
+
+add_executable(client_numa ${client_numa_SOURCES})
+add_executable(server_numa ${server_numa_SOURCES})
+
+set_target_properties(client_numa PROPERTIES RUNTIME_OUTPUT_DIRECTORY ./benchs/outback/)
+set_target_properties(server_numa PROPERTIES RUNTIME_OUTPUT_DIRECTORY ./benchs/outback/)
+
+target_link_libraries(client_numa ${LOG_LIBRARIES})
+target_link_libraries(server_numa ${LOG_LIBRARIES})

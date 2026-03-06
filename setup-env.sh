@@ -3,6 +3,116 @@
 mode="$1"
 ubuntu_version=$(lsb_release -r -s)
 
+# Check if NUMA-only mode
+if [ "$mode" == "numa" ]; then
+  echo "=========================================="
+  echo "Setting up for NUMA-only deployment"
+  echo "No RDMA/OFED installation required"
+  echo "=========================================="
+  
+  sudo apt update -y
+  sudo apt -y install \
+    g++ cmake clang \
+    python3-pip \
+    numactl \
+    sysstat zstd \
+    libtbb-dev \
+    libgtest-dev \
+    libboost-all-dev \
+    google-perftools \
+    libgoogle-perftools-dev \
+    cmake build-essential \
+    pkgconf gdb \
+    libssl-dev tmux \
+    liblua5.3-dev \
+    libgflags-dev \
+    libmemcached-dev \
+    libmemcached-tools \
+    memcached \
+    libnuma-dev \
+    linux-tools-common \
+    linux-tools-$(uname -r)
+  
+  echo ""
+  echo "Installing build dependencies..."
+  
+  # Create install directory
+  mkdir -p install
+  cd install
+  
+  # Install CMake 3.16.8
+  if [ ! -f cmake-3.16.8.tar.gz ]; then
+    echo "Downloading CMake..."
+    wget https://cmake.org/files/v3.16/cmake-3.16.8.tar.gz
+  fi
+  if [ ! -d "./cmake-3.16.8" ]; then
+    echo "Building CMake..."
+    tar zxf cmake-3.16.8.tar.gz
+    cd cmake-3.16.8 && ./configure && make -j 4 && sudo make install
+    cd ..
+  fi
+  
+  # Install abseil-cpp
+  if [ ! -d "abseil-cpp" ]; then
+    echo "Installing abseil-cpp..."
+    git clone https://github.com/abseil/abseil-cpp.git
+    cd abseil-cpp && mkdir -p build && cd build && cmake .. && make -j && sudo make install
+    find ./ -name "*.o" | xargs ar cr libabsl.a 
+    sudo cp libabsl.a /usr/lib
+    cd ../..
+  fi
+  
+  # Install gtest
+  if [ ! -d "/usr/src/gtest" ]; then
+    sudo apt install -y libgtest-dev
+  fi
+  cd /usr/src/gtest
+  sudo cmake .
+  sudo make
+  sudo cp /usr/src/gtest/lib/libgtest*.a /usr/local/lib/ 2>/dev/null || true
+  sudo cp -r /usr/src/gtest/include/gtest /usr/local/include/ 2>/dev/null || true
+  
+  cd -
+  
+  # Configure huge pages for better performance
+  echo "Configuring huge pages..."
+  sudo sh -c 'echo 1400 > /proc/sys/vm/nr_hugepages'
+  cat /proc/meminfo | grep Huge
+  
+  # Check NUMA configuration
+  echo ""
+  echo "=========================================="
+  echo "NUMA Configuration:"
+  echo "=========================================="
+  numactl --hardware
+  
+  echo ""
+  echo "=========================================="
+  echo "Setup complete for NUMA-only mode!"
+  echo "=========================================="
+  echo ""
+  echo "To build NUMA version:"
+  echo "  ./build_numa.sh"
+  echo ""
+  echo "Or manually:"
+  echo "  mkdir -p build && cd build"
+  echo "  cmake .."
+  echo "  make client_numa server_numa -j\$(nproc)"
+  echo ""
+  
+  exit 0
+fi
+
+# Original RDMA setup mode
+echo "=========================================="
+echo "Setting up for RDMA deployment"
+echo "This requires Mellanox OFED drivers"
+echo "=========================================="
+echo ""
+echo "If you want NUMA-only setup (no RDMA), run:"
+echo "  ./setup-env.sh numa"
+echo ""
+
 if [ $ubuntu_version == "18.04" ]; then
   wget https://content.mellanox.com/ofed/MLNX_OFED-4.9-5.1.0.0/MLNX_OFED_LINUX-4.9-5.1.0.0-ubuntu18.04-x86_64.tgz
   mv MLNX_OFED_LINUX-4.9-5.1.0.0-ubuntu18.04-x86_64.tgz ofed.tgz
