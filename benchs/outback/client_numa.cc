@@ -1,4 +1,8 @@
 #include <random>
+#include <algorithm>
+#include <numeric>
+#include <cmath>
+#include <functional>
 #include <gflags/gflags.h>
 
 #include "outback/outback_client_numa.hh"
@@ -18,6 +22,10 @@ using namespace outback;
 
 volatile bool running;
 std::atomic<size_t> ready_threads(0);
+
+constexpr size_t kLatencyHistMaxUs = 10000;
+constexpr size_t kLatencyHistBins = kLatencyHistMaxUs + 1;
+std::vector<std::vector<uint64_t>> g_latency_hist;
 
 auto setup_ludo_table() -> bool;
 
@@ -92,6 +100,8 @@ void run_benchmark(size_t sec) {
     }
 
     running = false;
+    g_latency_hist.assign(BenConfig.threads, std::vector<uint64_t>(kLatencyHistBins, 0));
+
     for(size_t worker_i = 0; worker_i < BenConfig.threads; worker_i++){
         thread_params[worker_i].thread_id = worker_i;
         thread_params[worker_i].throughput = 0;
@@ -106,6 +116,14 @@ void run_benchmark(size_t sec) {
 
     running = true;
     std::vector<size_t> tput_history(BenConfig.threads, 0);
+    std::vector<uint64_t> per_sec_tput;
+    std::vector<double> per_sec_avg_latency_us;
+    per_sec_tput.reserve(sec);
+    per_sec_avg_latency_us.reserve(sec);
+
+    uint64_t total_ops = 0;
+    double total_latency_us = 0;
+
     size_t current_sec = 0;
     while (current_sec < sec) {
         sleep(1);
@@ -117,8 +135,14 @@ void run_benchmark(size_t sec) {
             tlat += thread_params[i].latency;
             thread_params[i].latency = 0;
         }
+             double avg_lat_us = (tput > 0) ? (tlat / static_cast<double>(tput)) : 0.0;
+             per_sec_tput.push_back(tput);
+             per_sec_avg_latency_us.push_back(avg_lat_us);
+             total_ops += tput;
+             total_latency_us += tlat;
+
         LOG(2) << "[micro] >>> sec " << current_sec << " throughput: " << tput 
-               << ", latency: " << tlat/tput << "us";
+                 << ", latency: " << avg_lat_us << "us";
         ++current_sec;
     }
     
@@ -133,6 +157,55 @@ void run_benchmark(size_t sec) {
         throughput += p.throughput;
     }
     LOG(2) << "[micro] Throughput(op/s): " << throughput / sec;
+
+    if (!per_sec_tput.empty()) {
+        const double mean_tput_ops = static_cast<double>(std::accumulate(per_sec_tput.begin(), per_sec_tput.end(), uint64_t(0))) /
+                                     static_cast<double>(per_sec_tput.size());
+        const uint64_t max_tput_ops = *std::max_element(per_sec_tput.begin(), per_sec_tput.end());
+        const uint64_t min_tput_ops = *std::min_element(per_sec_tput.begin(), per_sec_tput.end());
+
+        const double mean_tput_mops = mean_tput_ops / 1e6;
+        const double max_tput_mops = static_cast<double>(max_tput_ops) / 1e6;
+        const double min_tput_mops = static_cast<double>(min_tput_ops) / 1e6;
+
+        const double mean_latency_us = (total_ops > 0) ? (total_latency_us / static_cast<double>(total_ops)) : 0.0;
+
+        std::vector<uint64_t> merged_hist(kLatencyHistBins, 0);
+        for (const auto& thread_hist : g_latency_hist) {
+            for (size_t b = 0; b < kLatencyHistBins; ++b) {
+                merged_hist[b] += thread_hist[b];
+            }
+        }
+
+        uint64_t hist_total = std::accumulate(merged_hist.begin(), merged_hist.end(), uint64_t(0));
+        auto quantile_us = [&](double q) -> double {
+            if (hist_total == 0) {
+                return 0.0;
+            }
+            uint64_t target = static_cast<uint64_t>(std::ceil(q * static_cast<double>(hist_total)));
+            if (target == 0) {
+                target = 1;
+            }
+            uint64_t cum = 0;
+            for (size_t b = 0; b < merged_hist.size(); ++b) {
+                cum += merged_hist[b];
+                if (cum >= target) {
+                    return static_cast<double>(b);
+                }
+            }
+            return static_cast<double>(kLatencyHistMaxUs);
+        };
+
+        const double tail_p99_latency_us = quantile_us(0.99);
+        const double tail_p999_latency_us = quantile_us(0.999);
+
+        LOG(2) << "[summary] Mean Throughput(MOPs): " << mean_tput_mops;
+        LOG(2) << "[summary] Max Throughput(MOPs): " << max_tput_mops;
+        LOG(2) << "[summary] Min Throughput(MOPs): " << min_tput_mops;
+        LOG(2) << "[summary] Mean Latency(us): " << mean_latency_us;
+        LOG(2) << "[summary] Tail Latency P99(us): " << tail_p99_latency_us;
+        LOG(2) << "[summary] Tail Latency P999(us): " << tail_p999_latency_us;
+    }
 }
 
 void* numa_client_worker(void* param) {
@@ -207,6 +280,11 @@ void* numa_client_worker(void* param) {
             }
             thread_param.throughput++;
             thread_param.latency += static_cast<double>(duration.count());
+            size_t lat_bucket = static_cast<size_t>(duration.count());
+            if (lat_bucket > kLatencyHistMaxUs) {
+                lat_bucket = kLatencyHistMaxUs;
+            }
+            g_latency_hist[thread_id][lat_bucket]++;
         }
     } else {  // YCSB workload
         while(running) {
@@ -256,6 +334,11 @@ void* numa_client_worker(void* param) {
             }
             thread_param.throughput++;
             thread_param.latency += static_cast<double>(duration.count());
+            size_t lat_bucket = static_cast<size_t>(duration.count());
+            if (lat_bucket > kLatencyHistMaxUs) {
+                lat_bucket = kLatencyHistMaxUs;
+            }
+            g_latency_hist[thread_id][lat_bucket]++;
         }
     }
     
