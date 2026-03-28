@@ -170,8 +170,6 @@ void run_benchmark(size_t sec) {
         const double max_tput_mops = static_cast<double>(max_tput_ops) / 1e6;
         const double min_tput_mops = static_cast<double>(min_tput_ops) / 1e6;
 
-        const double mean_latency_us = (total_ops > 0) ? (total_latency_us / static_cast<double>(total_ops)) : 0.0;
-
         std::vector<uint64_t> merged_hist(kLatencyHistBins, 0);
         for (const auto& thread_hist : g_latency_hist) {
             for (size_t b = 0; b < kLatencyHistBins; ++b) {
@@ -180,6 +178,15 @@ void run_benchmark(size_t sec) {
         }
 
         uint64_t hist_total = std::accumulate(merged_hist.begin(), merged_hist.end(), uint64_t(0));
+        long double weighted_latency_us = 0.0;
+        for (size_t b = 0; b < merged_hist.size(); ++b) {
+            const long double bin_latency_us = static_cast<long double>(b * kLatencyHistBinNs) / 1000.0L;
+            weighted_latency_us += static_cast<long double>(merged_hist[b]) * bin_latency_us;
+        }
+        const double mean_latency_us = (hist_total > 0)
+            ? static_cast<double>(weighted_latency_us / static_cast<long double>(hist_total))
+            : 0.0;
+
         auto percentile_from_rank = [&](double p) -> std::pair<double, uint64_t> {
             if (hist_total == 0) {
                 return {0.0, 0};
