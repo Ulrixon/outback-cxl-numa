@@ -3,6 +3,7 @@
 #include <numeric>
 #include <cmath>
 #include <functional>
+#include <iomanip>
 #include <gflags/gflags.h>
 
 #include "outback/outback_client_numa.hh"
@@ -24,7 +25,8 @@ volatile bool running;
 std::atomic<size_t> ready_threads(0);
 
 constexpr size_t kLatencyHistMaxUs = 10000;
-constexpr size_t kLatencyHistBins = kLatencyHistMaxUs + 1;
+constexpr uint64_t kLatencyHistBinNs = 100;
+constexpr size_t kLatencyHistBins = (kLatencyHistMaxUs * 1000) / kLatencyHistBinNs + 1;
 std::vector<std::vector<uint64_t>> g_latency_hist;
 
 auto setup_ludo_table() -> bool;
@@ -190,7 +192,7 @@ void run_benchmark(size_t sec) {
             for (size_t b = 0; b < merged_hist.size(); ++b) {
                 cum += merged_hist[b];
                 if (cum >= target) {
-                    return static_cast<double>(b);
+                    return static_cast<double>(b * kLatencyHistBinNs) / 1000.0;
                 }
             }
             return static_cast<double>(kLatencyHistMaxUs);
@@ -199,12 +201,18 @@ void run_benchmark(size_t sec) {
         const double tail_p99_latency_us = quantile_us(0.99);
         const double tail_p999_latency_us = quantile_us(0.999);
 
-        LOG(2) << "[summary] Mean Throughput(MOPs): " << mean_tput_mops;
-        LOG(2) << "[summary] Max Throughput(MOPs): " << max_tput_mops;
-        LOG(2) << "[summary] Min Throughput(MOPs): " << min_tput_mops;
-        LOG(2) << "[summary] Mean Latency(us): " << mean_latency_us;
-        LOG(2) << "[summary] Tail Latency P99(us): " << tail_p99_latency_us;
-        LOG(2) << "[summary] Tail Latency P999(us): " << tail_p999_latency_us;
+         LOG(2) << std::fixed << std::setprecision(6)
+             << "[summary] Mean Throughput(MOPs): " << mean_tput_mops;
+         LOG(2) << std::fixed << std::setprecision(6)
+             << "[summary] Max Throughput(MOPs): " << max_tput_mops;
+         LOG(2) << std::fixed << std::setprecision(6)
+             << "[summary] Min Throughput(MOPs): " << min_tput_mops;
+        LOG(2) << std::fixed << std::setprecision(8)
+             << "[summary] Mean Latency(us): " << mean_latency_us;
+         LOG(2) << std::fixed << std::setprecision(8)
+             << "[summary] Tail Latency P99(us): " << tail_p99_latency_us;
+         LOG(2) << std::fixed << std::setprecision(8)
+             << "[summary] Tail Latency P999(us): " << tail_p999_latency_us;
     }
 }
 
@@ -234,7 +242,7 @@ void* numa_client_worker(void* param) {
      */
     if(bench::BenConfig.workloads >= NORMAL) {
         while(running) {
-            std::chrono::microseconds duration(0);
+            uint64_t duration_ns = 0;
             double d = ratio_dis(gen);
             
             if(d <= BenConfig.read_ratio) {             // search
@@ -242,7 +250,7 @@ void* numa_client_worker(void* param) {
                 auto start_time = std::chrono::high_resolution_clock::now();    
                 auto res = numa_search(dummy_key);
                 auto end_time = std::chrono::high_resolution_clock::now();
-                duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
                 query_i++;
                 if (unlikely(query_i == bench_keys.size())) {
                     query_i = 0;
@@ -252,7 +260,7 @@ void* numa_client_worker(void* param) {
                 auto start_time = std::chrono::high_resolution_clock::now(); 
                 numa_put(dummy_key, dummy_key);
                 auto end_time = std::chrono::high_resolution_clock::now();
-                duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
                 insert_i++;
                 if (unlikely(insert_i == nonexist_keys.size())) {
                     insert_i = 0;
@@ -262,7 +270,7 @@ void* numa_client_worker(void* param) {
                 auto start_time = std::chrono::high_resolution_clock::now(); 
                 numa_update(dummy_key, dummy_key);
                 auto end_time = std::chrono::high_resolution_clock::now();
-                duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
                 update_i++;
                 if (unlikely(update_i == bench_keys.size())) {
                     update_i = 0;
@@ -272,23 +280,23 @@ void* numa_client_worker(void* param) {
                 auto start_time = std::chrono::high_resolution_clock::now();
                 numa_remove(dummy_key);
                 auto end_time = std::chrono::high_resolution_clock::now();
-                duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
                 remove_i++;
                 if (unlikely(remove_i == bench_keys.size())) {
                     remove_i = 0;
                 }
             }
             thread_param.throughput++;
-            thread_param.latency += static_cast<double>(duration.count());
-            size_t lat_bucket = static_cast<size_t>(duration.count());
-            if (lat_bucket > kLatencyHistMaxUs) {
-                lat_bucket = kLatencyHistMaxUs;
+            thread_param.latency += static_cast<double>(duration_ns) / 1000.0;
+            size_t lat_bucket = static_cast<size_t>(duration_ns / kLatencyHistBinNs);
+            if (lat_bucket >= kLatencyHistBins) {
+                lat_bucket = kLatencyHistBins - 1;
             }
             g_latency_hist[thread_id][lat_bucket]++;
         }
     } else {  // YCSB workload
         while(running) {
-            std::chrono::microseconds duration(0);
+            uint64_t duration_ns = 0;
             double d = ratio_dis(gen);
             
             if(d <= BenConfig.read_ratio) {             // search
@@ -296,7 +304,7 @@ void* numa_client_worker(void* param) {
                 auto start_time = std::chrono::high_resolution_clock::now();    
                 auto res = numa_search(dummy_key);
                 auto end_time = std::chrono::high_resolution_clock::now();
-                duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
                 query_i++;
                 if (unlikely(query_i == bench_keys.size())) {
                     query_i = 0;
@@ -306,7 +314,7 @@ void* numa_client_worker(void* param) {
                 auto start_time = std::chrono::high_resolution_clock::now(); 
                 numa_put(dummy_key, dummy_key);
                 auto end_time = std::chrono::high_resolution_clock::now();
-                duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
                 insert_i++;
                 if (unlikely(insert_i == nonexist_keys.size())) {
                     insert_i = 0;
@@ -316,7 +324,7 @@ void* numa_client_worker(void* param) {
                 auto start_time = std::chrono::high_resolution_clock::now(); 
                 numa_update(dummy_key, dummy_key);
                 auto end_time = std::chrono::high_resolution_clock::now();
-                duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
                 update_i++;
                 if (unlikely(update_i == bench_keys.size())) {
                     update_i = 0;
@@ -326,17 +334,17 @@ void* numa_client_worker(void* param) {
                 auto start_time = std::chrono::high_resolution_clock::now();
                 numa_remove(dummy_key);
                 auto end_time = std::chrono::high_resolution_clock::now();
-                duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time);
+                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
                 remove_i++;
                 if (unlikely(remove_i == bench_keys.size())) {
                     remove_i = 0;
                 }
             }
             thread_param.throughput++;
-            thread_param.latency += static_cast<double>(duration.count());
-            size_t lat_bucket = static_cast<size_t>(duration.count());
-            if (lat_bucket > kLatencyHistMaxUs) {
-                lat_bucket = kLatencyHistMaxUs;
+            thread_param.latency += static_cast<double>(duration_ns) / 1000.0;
+            size_t lat_bucket = static_cast<size_t>(duration_ns / kLatencyHistBinNs);
+            if (lat_bucket >= kLatencyHistBins) {
+                lat_bucket = kLatencyHistBins - 1;
             }
             g_latency_hist[thread_id][lat_bucket]++;
         }
