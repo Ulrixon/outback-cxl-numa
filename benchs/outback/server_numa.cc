@@ -11,7 +11,6 @@
 
 using namespace xstore::numa;
 using namespace xstore::transport;
-using namespace bench;
 using namespace outback;
 
 using XThread = ::r2::Thread<usize>;
@@ -45,7 +44,7 @@ int main(int argc, char **argv) {
     running = true;
 
     size_t current_sec = 0;
-    while (current_sec < FLAGS_seconds + 10) {
+    while (current_sec < bench::FLAGS_seconds + 10) {
         sleep(1);
         ++current_sec;
     }
@@ -58,7 +57,7 @@ int main(int argc, char **argv) {
 
 auto setup_ludo_table() -> bool {
     // Allocate NUMA memory for server data structures
-    size_t packed_data_size = sizeof(packed_data_t) + 2 * FLAGS_nkeys * sizeof(packed_struct_t);
+    size_t packed_data_size = sizeof(packed_data_t) + 2 * bench::FLAGS_nkeys * sizeof(packed_struct_t);
     size_t ludo_buckets_size = sizeof(ludo_buckets_t) + 1024 * sizeof(LudoBucket);
     size_t total_size = packed_data_size + ludo_buckets_size + 64 * 1024 * 1024; // Extra space
 
@@ -73,15 +72,15 @@ auto setup_ludo_table() -> bool {
     
     // Allocate packed_data on NUMA node
     void* packed_data_mem = allocator.alloc(packed_data_size);
-    packed_data = new (packed_data_mem) packed_data_t(2 * FLAGS_nkeys);
+    packed_data = new (packed_data_mem) packed_data_t(2 * bench::FLAGS_nkeys);
     
     // Allocate LRU cache (can be local or NUMA)
     lru_cache = new lru_cache_t(2048, 10);
     
     // Build ludo maintenance unit
     ludo_maintenance_t ludo_maintenance_unit(1024);
-    for (uint64_t i = 0; i < FLAGS_nkeys; i++) {
-        KeyType key = exist_keys[i];
+    for (uint64_t i = 0; i < bench::FLAGS_nkeys; i++) {
+        KeyType key = bench::exist_keys[i];
         V addr = packed_data->bulk_load_data(key, sizeof(V), i);
         ludo_maintenance_unit.insert(key, addr);
         r2::compile_fence();
@@ -106,7 +105,7 @@ auto setup_ludo_table() -> bool {
     }
     #endif
 
-    exist_keys.clear();
+    bench::exist_keys.clear();
     return true;
 }
 
@@ -116,7 +115,7 @@ void register_numa_server() {
     server_state->ludo_buckets_ptr = ludo_buckets;
     server_state->packed_data_ptr = packed_data;
     server_state->num_buckets = ludo_lookup_unit->getBucketsNum();
-    server_state->num_data_entries = 2 * FLAGS_nkeys;
+    server_state->num_data_entries = 2 * bench::FLAGS_nkeys;
     server_state->mutexArray = mutexArray;
     server_state->numa_node = FLAGS_numa_node;
 

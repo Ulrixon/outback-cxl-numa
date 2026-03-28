@@ -3,6 +3,8 @@
 #include <numa.h>
 #include <numaif.h>
 #include <cstdlib>
+#include <atomic>
+#include <cstring>
 #include <memory>
 #include <stdexcept>
 #include "r2/src/logging.hh"
