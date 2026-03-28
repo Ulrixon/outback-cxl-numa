@@ -48,7 +48,7 @@ class LudoBuckets {
 public:
     ludo_bucket* bucketsArray;
     FastHasher64<uint64_t> hp;
-    explicit LudoBuckets(size_t numElements_): numElements(numElements_), owns_memory_(true) {
+    explicit LudoBuckets(size_t numElements_): numElements(numElements_), owns_memory_(true), mutexArray(nullptr) {
         hp.setSeed(0x93ea45);
         size_t structSize = sizeof(ludo_bucket);
         //mutexArray = new std::mutex[numElements];
