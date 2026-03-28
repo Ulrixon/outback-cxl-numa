@@ -22,6 +22,7 @@ set(LOG_LIBRARIES
     gflags
     ibverbs
     pthread
+    rt
     boost_system
     memcached
 	numa
