@@ -109,7 +109,9 @@ auto setup_ludo_table() -> bool {
         ludo_buckets_mem[i] = generated_ludo_buckets->bucketsArray[i];
     }
 
-    std::memset(const_cast<uint8_t*>(reinterpret_cast<const uint8_t*>(lockArray)), 0, lock_array_size);
+    for (size_t i = 0; i < lock_array_size; ++i) {
+        lockArray[i] = 0;
+    }
 
     // Load packed data into shared mapped region
     for (uint64_t i = 0; i < bench::FLAGS_nkeys; i++) {
