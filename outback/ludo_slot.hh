@@ -48,11 +48,16 @@ class LudoBuckets {
 public:
     ludo_bucket* bucketsArray;
     FastHasher64<uint64_t> hp;
-    explicit LudoBuckets(size_t numElements_): numElements(numElements_) {
+    explicit LudoBuckets(size_t numElements_): numElements(numElements_), owns_memory_(true) {
         hp.setSeed(0x93ea45);
         size_t structSize = sizeof(ludo_bucket);
         //mutexArray = new std::mutex[numElements];
         bucketsArray = new ludo_bucket[numElements];   //packed_slot rawArray[numElements];
+    }
+
+    LudoBuckets(ludo_bucket* externalBuckets, size_t numElements_)
+        : bucketsArray(externalBuckets), numElements(numElements_), owns_memory_(false), mutexArray(nullptr) {
+        hp.setSeed(0x93ea45);
     }
 
     inline uint8_t fingerprint(const uint64_t key) {
@@ -127,12 +132,17 @@ public:
     }
 
     ~LudoBuckets(){
-        delete[] bucketsArray;
-        delete[] mutexArray;
+        if (owns_memory_ && bucketsArray) {
+            delete[] bucketsArray;
+        }
+        if (mutexArray) {
+            delete[] mutexArray;
+        }
     }
 
 private:
     const size_t numElements;
+    bool owns_memory_;
     std::mutex* mutexArray;
 
 };

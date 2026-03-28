@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <cstdint>
+#include <atomic>
 #include <mutex>
 
 #include "r2/src/logging.hh"

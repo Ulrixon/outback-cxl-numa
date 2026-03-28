@@ -1,9 +1,15 @@
 #pragma once
 
+#include <fcntl.h>
+#include <sys/mman.h>
+#include <unistd.h>
+
+#include <cstring>
 #include <memory>
 #include <unordered_map>
 #include <mutex>
 #include <atomic>
+#include <string>
 #include "xutils/numa_memory.hh"
 #include "r2/src/common.hh"
 
@@ -11,6 +17,151 @@ namespace xstore {
 namespace transport {
 
 using namespace r2;
+
+static constexpr uint64_t kNumaMetaMagic = 0x4F55544241434B4EULL; // "OUTBACKN"
+
+inline std::string numa_meta_name(const std::string& server_name) {
+    return "/outback_numa_meta_" + server_name;
+}
+
+inline std::string numa_region_name(const std::string& server_name) {
+    return "/outback_numa_region_" + server_name;
+}
+
+inline size_t align_up(size_t value, size_t alignment) {
+    return (value + alignment - 1) & ~(alignment - 1);
+}
+
+struct alignas(64) SharedNumaRegistry {
+    uint64_t magic;
+    uint32_t version;
+    uint32_t ready;
+
+    int32_t numa_node;
+    uint32_t reserved;
+
+    size_t num_buckets;
+    size_t num_data_entries;
+    size_t region_size;
+
+    size_t ludo_buckets_offset;
+    size_t packed_array_offset;
+    size_t lock_array_offset;
+    size_t next_free_index;
+};
+
+inline bool map_numa_registry(const std::string& server_name,
+                              bool create,
+                              SharedNumaRegistry** registry,
+                              int* fd_out) {
+    if (!registry || !fd_out) {
+        return false;
+    }
+
+    auto name = numa_meta_name(server_name);
+    int flags = create ? (O_CREAT | O_RDWR) : O_RDWR;
+    int fd = shm_open(name.c_str(), flags, 0666);
+    if (fd < 0) {
+        return false;
+    }
+
+    if (create && ftruncate(fd, sizeof(SharedNumaRegistry)) != 0) {
+        close(fd);
+        return false;
+    }
+
+    void* mapped = mmap(nullptr, sizeof(SharedNumaRegistry), PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (mapped == MAP_FAILED) {
+        close(fd);
+        return false;
+    }
+
+    if (create) {
+        std::memset(mapped, 0, sizeof(SharedNumaRegistry));
+        auto* meta = reinterpret_cast<SharedNumaRegistry*>(mapped);
+        meta->magic = kNumaMetaMagic;
+        meta->version = 1;
+        meta->ready = 0;
+        msync(mapped, sizeof(SharedNumaRegistry), MS_SYNC);
+    }
+
+    *registry = reinterpret_cast<SharedNumaRegistry*>(mapped);
+    *fd_out = fd;
+    return true;
+}
+
+inline bool create_shared_numa_region(const std::string& server_name,
+                                      size_t size,
+                                      int numa_node,
+                                      void** base_out,
+                                      int* fd_out) {
+    if (!base_out || !fd_out) {
+        return false;
+    }
+
+    auto name = numa_region_name(server_name);
+    int fd = shm_open(name.c_str(), O_CREAT | O_RDWR, 0666);
+    if (fd < 0) {
+        return false;
+    }
+
+    if (ftruncate(fd, size) != 0) {
+        close(fd);
+        return false;
+    }
+
+    void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (mapped == MAP_FAILED) {
+        close(fd);
+        return false;
+    }
+
+    std::memset(mapped, 0, size);
+    if (numa_available() >= 0 && numa_node >= 0) {
+        numa_tonode_memory(mapped, size, numa_node);
+    }
+
+    *base_out = mapped;
+    *fd_out = fd;
+    return true;
+}
+
+inline bool open_shared_numa_region(const std::string& server_name,
+                                    size_t size,
+                                    void** base_out,
+                                    int* fd_out) {
+    if (!base_out || !fd_out) {
+        return false;
+    }
+
+    auto name = numa_region_name(server_name);
+    int fd = shm_open(name.c_str(), O_RDWR, 0666);
+    if (fd < 0) {
+        return false;
+    }
+
+    void* mapped = mmap(nullptr, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (mapped == MAP_FAILED) {
+        close(fd);
+        return false;
+    }
+
+    *base_out = mapped;
+    *fd_out = fd;
+    return true;
+}
+
+inline void numa_lock_byte(volatile uint8_t* lock_byte) {
+    while (__sync_lock_test_and_set(lock_byte, 1)) {
+        while (*lock_byte) {
+            asm volatile("pause" ::: "memory");
+        }
+    }
+}
+
+inline void numa_unlock_byte(volatile uint8_t* lock_byte) {
+    __sync_lock_release(lock_byte);
+}
 
 /**
  * @brief NUMA-based transport (replaces RDMA UD transport)
@@ -102,15 +253,24 @@ struct ServerNumaState {
     void* packed_data_ptr;
     size_t num_buckets;
     size_t num_data_entries;
-    std::mutex* mutexArray;
+    volatile uint8_t* lock_array;
     int numa_node;
+
+    SharedNumaRegistry* shared_meta;
+    void* shared_region_base;
+    int shared_region_fd;
+    int shared_meta_fd;
 
     ServerNumaState() : ludo_buckets_ptr(nullptr), 
                         packed_data_ptr(nullptr),
                         num_buckets(0), 
                         num_data_entries(0),
-                        mutexArray(nullptr),
-                        numa_node(-1) {}
+                        lock_array(nullptr),
+                        numa_node(-1),
+                        shared_meta(nullptr),
+                        shared_region_base(nullptr),
+                        shared_region_fd(-1),
+                        shared_meta_fd(-1) {}
 };
 
 /**

@@ -15,7 +15,7 @@ using namespace outback;
 /*****  GLOBAL VARIABLES ******/
 volatile bool running = true;
 std::atomic<size_t> ready_threads(0);
-std::mutex* mutexArray;
+volatile uint8_t* lockArray;
 
 /*****  LUDO BUCKETS AND UNDERLYING DATA (ON NUMA NODE) *****/
 lru_cache_t* lru_cache;
@@ -63,7 +63,7 @@ void outback_put_direct(const size_t loc, const KeyType& key, const ValType& val
     FastHasher64<K> h;
     
     size_t row = loc / SLOTS_NUM_BUCKET;
-    std::unique_lock<std::mutex> lock(mutexArray[row]);
+    numa_lock_byte(&lockArray[row]);
     h.setSeed(ludo_lookup_unit->buckets[row].seed);
     uint8_t slot = uint8_t(h(key) >> 62);
     
@@ -121,12 +121,14 @@ void outback_put_direct(const size_t loc, const KeyType& key, const ValType& val
             reply->val = 0;
             break;
     }
+
+    numa_unlock_byte(&lockArray[row]);
 }
 
 // UPDATE - Direct memory access version
 void outback_update_direct(const size_t loc, const KeyType& key, const ValType& val, ReplyValue* reply) {
     size_t row = loc / SLOTS_NUM_BUCKET;
-    std::unique_lock<std::mutex> lock(mutexArray[row]);
+    numa_lock_byte(&lockArray[row]);
     
     auto addr = ludo_buckets->read_addr(row, loc % SLOTS_NUM_BUCKET);
     KeyType key_;
@@ -140,12 +142,14 @@ void outback_update_direct(const size_t loc, const KeyType& key, const ValType& 
         reply->status = false;
         reply->val = 0;
     }
+
+    numa_unlock_byte(&lockArray[row]);
 }
 
 // REMOVE - Direct memory access version
 void outback_remove_direct(const size_t loc, const KeyType& key, ReplyValue* reply) {
     size_t row = loc / SLOTS_NUM_BUCKET;
-    std::unique_lock<std::mutex> lock(mutexArray[row]);
+    numa_lock_byte(&lockArray[row]);
     
     auto addr = ludo_buckets->read_addr(row, loc % SLOTS_NUM_BUCKET);
     auto res = packed_data->remove_data_with_key_check(addr, key);
@@ -155,6 +159,8 @@ void outback_remove_direct(const size_t loc, const KeyType& key, ReplyValue* rep
     
     reply->status = true;
     reply->val = 0;
+
+    numa_unlock_byte(&lockArray[row]);
 }
 
 // SCAN - Direct memory access version
