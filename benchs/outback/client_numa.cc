@@ -180,26 +180,32 @@ void run_benchmark(size_t sec) {
         }
 
         uint64_t hist_total = std::accumulate(merged_hist.begin(), merged_hist.end(), uint64_t(0));
-        auto quantile_us = [&](double q) -> double {
+        auto percentile_from_rank = [&](double p) -> std::pair<double, uint64_t> {
             if (hist_total == 0) {
-                return 0.0;
+                return {0.0, 0};
             }
-            uint64_t target = static_cast<uint64_t>(std::ceil(q * static_cast<double>(hist_total)));
-            if (target == 0) {
-                target = 1;
+
+            // 1-based percentile rank: index = ceil(p * N)
+            uint64_t rank = static_cast<uint64_t>(std::ceil(p * static_cast<double>(hist_total)));
+            if (rank == 0) {
+                rank = 1;
             }
-            uint64_t cum = 0;
+
+            uint64_t cumulative = 0;
             for (size_t b = 0; b < merged_hist.size(); ++b) {
-                cum += merged_hist[b];
-                if (cum >= target) {
-                    return static_cast<double>(b * kLatencyHistBinNs) / 1000.0;
+                cumulative += merged_hist[b];
+                if (cumulative >= rank) {
+                    double latency_us = static_cast<double>(b * kLatencyHistBinNs) / 1000.0;
+                    return {latency_us, rank};
                 }
             }
-            return static_cast<double>(kLatencyHistMaxUs);
+
+            return {static_cast<double>(kLatencyHistMaxUs), rank};
         };
 
-        const double tail_p99_latency_us = quantile_us(0.99);
-        const double tail_p999_latency_us = quantile_us(0.999);
+        const auto p95 = percentile_from_rank(0.95);
+        const auto p99 = percentile_from_rank(0.99);
+        const auto p999 = percentile_from_rank(0.999);
 
          LOG(2) << std::fixed << std::setprecision(6)
              << "[summary] Mean Throughput(MOPs): " << mean_tput_mops;
@@ -210,9 +216,13 @@ void run_benchmark(size_t sec) {
         LOG(2) << std::fixed << std::setprecision(8)
              << "[summary] Mean Latency(us): " << mean_latency_us;
          LOG(2) << std::fixed << std::setprecision(8)
-             << "[summary] Tail Latency P99(us): " << tail_p99_latency_us;
+             << "[summary] Tail Latency P95(us): " << p95.first;
          LOG(2) << std::fixed << std::setprecision(8)
-             << "[summary] Tail Latency P999(us): " << tail_p999_latency_us;
+             << "[summary] Tail Latency P99(us): " << p99.first;
+         LOG(2) << std::fixed << std::setprecision(8)
+             << "[summary] Tail Latency P999(us): " << p999.first;
+         LOG(2) << "[summary] Percentile Samples N: " << hist_total
+             << ", ranks(p95/p99/p999): " << p95.second << "/" << p99.second << "/" << p999.second;
     }
 }
 
