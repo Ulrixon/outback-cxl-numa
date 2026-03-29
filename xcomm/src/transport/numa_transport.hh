@@ -5,6 +5,7 @@
 #include <unistd.h>
 
 #include <cstring>
+#include <cctype>
 #include <memory>
 #include <unordered_map>
 #include <mutex>
@@ -19,6 +20,7 @@ namespace transport {
 using namespace r2;
 
 static constexpr uint64_t kNumaMetaMagic = 0x4F55544241434B4EULL; // "OUTBACKN"
+static constexpr size_t kMaxNumaLanes = 64;
 
 inline std::string numa_meta_name(const std::string& server_name) {
     return "/outback_numa_meta_" + server_name;
@@ -26,6 +28,22 @@ inline std::string numa_meta_name(const std::string& server_name) {
 
 inline std::string numa_region_name(const std::string& server_name) {
     return "/outback_numa_region_" + server_name;
+}
+
+inline std::string make_numa_server_name(const std::string& server_addr) {
+    std::string name;
+    name.reserve(server_addr.size());
+    for (char c : server_addr) {
+        if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') {
+            name.push_back(c);
+        } else {
+            name.push_back('_');
+        }
+    }
+    if (name.empty()) {
+        name = "default";
+    }
+    return name;
 }
 
 inline size_t align_up(size_t value, size_t alignment) {
@@ -47,7 +65,12 @@ struct alignas(64) SharedNumaRegistry {
     size_t ludo_buckets_offset;
     size_t packed_array_offset;
     size_t lock_array_offset;
+
+    uint32_t mem_threads;
+    uint32_t reserved2;
+
     size_t next_free_index;
+    size_t lane_next_free_index[kMaxNumaLanes];
 };
 
 inline bool map_numa_registry(const std::string& server_name,

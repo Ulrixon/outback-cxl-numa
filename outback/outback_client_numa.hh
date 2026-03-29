@@ -22,13 +22,23 @@ int remote_registry_fd = -1;
 ludo_buckets_t* remote_ludo_buckets = nullptr;
 packed_data_t* remote_packed_data = nullptr;
 volatile uint8_t* remote_lock_array = nullptr;
+thread_local uint32_t remote_lane_id = 0;
+
+inline void set_remote_lane_id(uint32_t lane) {
+    remote_lane_id = lane;
+}
 
 inline auto alloc_remote_data_slot() -> ::r2::Option<size_t> {
     if (!remote_registry) {
         return {};
     }
 
-    auto idx = __sync_fetch_and_add(&(remote_registry->next_free_index), size_t(1));
+    const uint32_t lanes = (remote_registry->mem_threads == 0)
+        ? 1
+        : std::min<uint32_t>(remote_registry->mem_threads, static_cast<uint32_t>(kMaxNumaLanes));
+    const uint32_t lane = remote_lane_id % lanes;
+
+    auto idx = __sync_fetch_and_add(&(remote_registry->lane_next_free_index[lane]), static_cast<size_t>(lanes));
     if (idx >= remote_registry->num_data_entries) {
         return {};
     }

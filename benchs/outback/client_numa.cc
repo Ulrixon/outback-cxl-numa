@@ -30,6 +30,7 @@ constexpr size_t kLatencyHistBins = (kLatencyHistMaxUs * 1000) / kLatencyHistBin
 std::vector<std::vector<uint64_t>> g_latency_hist;
 
 auto setup_ludo_table() -> bool;
+std::string get_numa_server_name_for_client();
 
 namespace outback {
 
@@ -44,6 +45,7 @@ int main(int argc, char **argv) {
     // Initialize NUMA
     init_numa();
     LOG(2) << "[NUMA initialized] Current node: " << get_current_numa_node();
+    LOG(2) << "[NUMA mode] --nic_idx=" << FLAGS_nic_idx << " is accepted for CLI compatibility (not used).";
 
     LOG(2) << "[Loading data] ...";
     bench::load_benchmark_config();
@@ -53,7 +55,8 @@ int main(int argc, char **argv) {
     setup_ludo_table();
 
     LOG(2) << "[Connect to NUMA server] ...";
-    if (!connect_to_numa_server("default")) {
+    const std::string server_name = get_numa_server_name_for_client();
+    if (!connect_to_numa_server(server_name)) {
         LOG(4) << "Failed to connect to NUMA server";
         return -1;
     }
@@ -87,6 +90,16 @@ auto setup_ludo_table() -> bool {
     #endif
     exist_keys.clear();
     return true;
+}
+
+std::string get_numa_server_name_for_client() {
+    std::string base = make_numa_server_name(FLAGS_server_addr);
+    if (FLAGS_mem_threads > 0) {
+        const auto worker_id = static_cast<u64>(std::max(0, FLAGS_start_threads));
+        const auto lane = worker_id % FLAGS_mem_threads;
+        LOG(2) << "[NUMA connect lane] b" << lane << " (compat), endpoint: " << base;
+    }
+    return base;
 }
 
 namespace outback {
@@ -236,11 +249,18 @@ void run_benchmark(size_t sec) {
 void* numa_client_worker(void* param) {
     thread_param_t &thread_param = *(thread_param_t *)param;
     uint32_t thread_id = thread_param.thread_id;
+
+    uint32_t effective_lanes = (remote_registry && remote_registry->mem_threads > 0)
+        ? std::min<uint32_t>(remote_registry->mem_threads, static_cast<uint32_t>(kMaxNumaLanes))
+        : static_cast<uint32_t>(std::max(1, FLAGS_mem_threads));
+    uint32_t lane = (static_cast<uint32_t>(std::max(0, FLAGS_start_threads)) + thread_id) % effective_lanes;
+    set_remote_lane_id(lane);
     
     // Bind thread to local NUMA node (CPU node)
     // bind_to_numa_node(0);  // Uncomment if needed
     
-    LOG(2) << "[Worker " << thread_id << "] Starting on NUMA node " << get_current_numa_node();
+        LOG(2) << "[Worker " << thread_id << "] Starting on NUMA node " << get_current_numa_node()
+            << ", lane b" << lane;
 
     // Generate test data indices
     size_t query_i = 0, insert_i = 0, remove_i = 0, update_i = 0;
@@ -259,111 +279,117 @@ void* numa_client_worker(void* param) {
      */
     if(bench::BenConfig.workloads >= NORMAL) {
         while(running) {
-            uint64_t duration_ns = 0;
-            double d = ratio_dis(gen);
-            
-            if(d <= BenConfig.read_ratio) {             // search
-                KeyType dummy_key = bench_keys[query_i];
-                auto start_time = std::chrono::high_resolution_clock::now();    
-                auto res = numa_search(dummy_key);
-                auto end_time = std::chrono::high_resolution_clock::now();
-                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
-                query_i++;
-                if (unlikely(query_i == bench_keys.size())) {
-                    query_i = 0;
+            const int coro_factor = std::max(1, BenConfig.coros);
+            for (int coro_i = 0; coro_i < coro_factor && running; ++coro_i) {
+                uint64_t duration_ns = 0;
+                double d = ratio_dis(gen);
+
+                if(d <= BenConfig.read_ratio) {             // search
+                    KeyType dummy_key = bench_keys[query_i];
+                    auto start_time = std::chrono::high_resolution_clock::now();
+                    auto res = numa_search(dummy_key);
+                    auto end_time = std::chrono::high_resolution_clock::now();
+                    duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
+                    query_i++;
+                    if (unlikely(query_i == bench_keys.size())) {
+                        query_i = 0;
+                    }
+                } else if(d <= BenConfig.read_ratio + BenConfig.insert_ratio) {      // insert
+                    KeyType dummy_key = nonexist_keys[insert_i];
+                    auto start_time = std::chrono::high_resolution_clock::now();
+                    numa_put(dummy_key, dummy_key);
+                    auto end_time = std::chrono::high_resolution_clock::now();
+                    duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
+                    insert_i++;
+                    if (unlikely(insert_i == nonexist_keys.size())) {
+                        insert_i = 0;
+                    }
+                } else if(d <= BenConfig.read_ratio + BenConfig.insert_ratio + BenConfig.update_ratio) { // update
+                    KeyType dummy_key = bench_keys[update_i];
+                    auto start_time = std::chrono::high_resolution_clock::now();
+                    numa_update(dummy_key, dummy_key);
+                    auto end_time = std::chrono::high_resolution_clock::now();
+                    duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
+                    update_i++;
+                    if (unlikely(update_i == bench_keys.size())) {
+                        update_i = 0;
+                    }
+                } else {  // delete
+                    KeyType dummy_key = bench_keys[remove_i];
+                    auto start_time = std::chrono::high_resolution_clock::now();
+                    numa_remove(dummy_key);
+                    auto end_time = std::chrono::high_resolution_clock::now();
+                    duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
+                    remove_i++;
+                    if (unlikely(remove_i == bench_keys.size())) {
+                        remove_i = 0;
+                    }
                 }
-            } else if(d <= BenConfig.read_ratio + BenConfig.insert_ratio) {      // insert
-                KeyType dummy_key = nonexist_keys[insert_i];
-                auto start_time = std::chrono::high_resolution_clock::now(); 
-                numa_put(dummy_key, dummy_key);
-                auto end_time = std::chrono::high_resolution_clock::now();
-                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
-                insert_i++;
-                if (unlikely(insert_i == nonexist_keys.size())) {
-                    insert_i = 0;
+                thread_param.throughput++;
+                thread_param.latency += static_cast<double>(duration_ns) / 1000.0;
+                size_t lat_bucket = static_cast<size_t>(duration_ns / kLatencyHistBinNs);
+                if (lat_bucket >= kLatencyHistBins) {
+                    lat_bucket = kLatencyHistBins - 1;
                 }
-            } else if(d <= BenConfig.read_ratio + BenConfig.insert_ratio + BenConfig.update_ratio) { // update
-                KeyType dummy_key = bench_keys[update_i];
-                auto start_time = std::chrono::high_resolution_clock::now(); 
-                numa_update(dummy_key, dummy_key);
-                auto end_time = std::chrono::high_resolution_clock::now();
-                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
-                update_i++;
-                if (unlikely(update_i == bench_keys.size())) {
-                    update_i = 0;
-                }
-            } else {  // delete
-                KeyType dummy_key = bench_keys[remove_i];
-                auto start_time = std::chrono::high_resolution_clock::now();
-                numa_remove(dummy_key);
-                auto end_time = std::chrono::high_resolution_clock::now();
-                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
-                remove_i++;
-                if (unlikely(remove_i == bench_keys.size())) {
-                    remove_i = 0;
-                }
+                g_latency_hist[thread_id][lat_bucket]++;
             }
-            thread_param.throughput++;
-            thread_param.latency += static_cast<double>(duration_ns) / 1000.0;
-            size_t lat_bucket = static_cast<size_t>(duration_ns / kLatencyHistBinNs);
-            if (lat_bucket >= kLatencyHistBins) {
-                lat_bucket = kLatencyHistBins - 1;
-            }
-            g_latency_hist[thread_id][lat_bucket]++;
         }
     } else {  // YCSB workload
         while(running) {
-            uint64_t duration_ns = 0;
-            double d = ratio_dis(gen);
-            
-            if(d <= BenConfig.read_ratio) {             // search
-                KeyType dummy_key = bench_keys[query_i];
-                auto start_time = std::chrono::high_resolution_clock::now();    
-                auto res = numa_search(dummy_key);
-                auto end_time = std::chrono::high_resolution_clock::now();
-                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
-                query_i++;
-                if (unlikely(query_i == bench_keys.size())) {
-                    query_i = 0;
+            const int coro_factor = std::max(1, BenConfig.coros);
+            for (int coro_i = 0; coro_i < coro_factor && running; ++coro_i) {
+                uint64_t duration_ns = 0;
+                double d = ratio_dis(gen);
+
+                if(d <= BenConfig.read_ratio) {             // search
+                    KeyType dummy_key = bench_keys[query_i];
+                    auto start_time = std::chrono::high_resolution_clock::now();
+                    auto res = numa_search(dummy_key);
+                    auto end_time = std::chrono::high_resolution_clock::now();
+                    duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
+                    query_i++;
+                    if (unlikely(query_i == bench_keys.size())) {
+                        query_i = 0;
+                    }
+                } else if(d <= BenConfig.read_ratio + BenConfig.insert_ratio) {      // insert
+                    KeyType dummy_key = std::stoull(workload.NextSequenceKey().substr(4));
+                    auto start_time = std::chrono::high_resolution_clock::now();
+                    numa_put(dummy_key, dummy_key);
+                    auto end_time = std::chrono::high_resolution_clock::now();
+                    duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
+                    insert_i++;
+                    if (unlikely(insert_i == nonexist_keys.size())) {
+                        insert_i = 0;
+                    }
+                } else if(d <= BenConfig.read_ratio + BenConfig.insert_ratio + BenConfig.update_ratio) { // update
+                    KeyType dummy_key = bench_keys[update_i];
+                    auto start_time = std::chrono::high_resolution_clock::now();
+                    numa_update(dummy_key, dummy_key);
+                    auto end_time = std::chrono::high_resolution_clock::now();
+                    duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
+                    update_i++;
+                    if (unlikely(update_i == bench_keys.size())) {
+                        update_i = 0;
+                    }
+                } else {  // delete
+                    KeyType dummy_key = bench_keys[remove_i];
+                    auto start_time = std::chrono::high_resolution_clock::now();
+                    numa_remove(dummy_key);
+                    auto end_time = std::chrono::high_resolution_clock::now();
+                    duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
+                    remove_i++;
+                    if (unlikely(remove_i == bench_keys.size())) {
+                        remove_i = 0;
+                    }
                 }
-            } else if(d <= BenConfig.read_ratio + BenConfig.insert_ratio) {      // insert
-                KeyType dummy_key = std::stoull(workload.NextSequenceKey().substr(4));
-                auto start_time = std::chrono::high_resolution_clock::now(); 
-                numa_put(dummy_key, dummy_key);
-                auto end_time = std::chrono::high_resolution_clock::now();
-                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
-                insert_i++;
-                if (unlikely(insert_i == nonexist_keys.size())) {
-                    insert_i = 0;
+                thread_param.throughput++;
+                thread_param.latency += static_cast<double>(duration_ns) / 1000.0;
+                size_t lat_bucket = static_cast<size_t>(duration_ns / kLatencyHistBinNs);
+                if (lat_bucket >= kLatencyHistBins) {
+                    lat_bucket = kLatencyHistBins - 1;
                 }
-            } else if(d <= BenConfig.read_ratio + BenConfig.insert_ratio + BenConfig.update_ratio) { // update
-                KeyType dummy_key = bench_keys[update_i];
-                auto start_time = std::chrono::high_resolution_clock::now(); 
-                numa_update(dummy_key, dummy_key);
-                auto end_time = std::chrono::high_resolution_clock::now();
-                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
-                update_i++;
-                if (unlikely(update_i == bench_keys.size())) {
-                    update_i = 0;
-                }
-            } else {  // delete
-                KeyType dummy_key = bench_keys[remove_i];
-                auto start_time = std::chrono::high_resolution_clock::now();
-                numa_remove(dummy_key);
-                auto end_time = std::chrono::high_resolution_clock::now();
-                duration_ns = static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(end_time - start_time).count());
-                remove_i++;
-                if (unlikely(remove_i == bench_keys.size())) {
-                    remove_i = 0;
-                }
+                g_latency_hist[thread_id][lat_bucket]++;
             }
-            thread_param.throughput++;
-            thread_param.latency += static_cast<double>(duration_ns) / 1000.0;
-            size_t lat_bucket = static_cast<size_t>(duration_ns / kLatencyHistBinNs);
-            if (lat_bucket >= kLatencyHistBins) {
-                lat_bucket = kLatencyHistBins - 1;
-            }
-            g_latency_hist[thread_id][lat_bucket]++;
         }
     }
     

@@ -1,5 +1,6 @@
 #include <iostream>
 #include <stdexcept>
+#include <algorithm>
 #include <gflags/gflags.h>
 
 #include "r2/src/thread.hh"                   /// Thread
@@ -22,15 +23,18 @@ DEFINE_int32(numa_node, 1, "NUMA node to allocate server memory");
 auto setup_ludo_table() -> bool;
 void register_numa_server();
 
-constexpr const char* kDefaultServerName = "default";
+std::string g_server_name = "default";
 
 int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, false);
+
+    g_server_name = make_numa_server_name(bench::FLAGS_server_addr);
 
     // Initialize NUMA
     init_numa();
     LOG(2) << "[NUMA initialized] Current node: " << get_current_numa_node();
     LOG(2) << "[Server will use NUMA node] " << FLAGS_numa_node;
+    LOG(2) << "[NUMA mode] --nic_idx=" << bench::FLAGS_nic_idx << " is accepted for CLI compatibility (not used).";
 
     // Setup the value
     LOG(2) << "[Outback server loading data] ...";
@@ -84,14 +88,14 @@ auto setup_ludo_table() -> bool {
 
     SharedNumaRegistry* shared_meta = nullptr;
     int shared_meta_fd = -1;
-    if (!map_numa_registry(kDefaultServerName, true, &shared_meta, &shared_meta_fd)) {
+    if (!map_numa_registry(g_server_name, true, &shared_meta, &shared_meta_fd)) {
         LOG(4) << "Failed to create/open NUMA shared registry";
         return false;
     }
 
     void* shared_region_base = nullptr;
     int shared_region_fd = -1;
-    if (!create_shared_numa_region(kDefaultServerName, total_size, FLAGS_numa_node,
+    if (!create_shared_numa_region(g_server_name, total_size, FLAGS_numa_node,
                                    &shared_region_base, &shared_region_fd)) {
         LOG(4) << "Failed to create/map NUMA shared region";
         return false;
@@ -136,7 +140,17 @@ auto setup_ludo_table() -> bool {
     shared_meta->packed_array_offset = packed_offset;
     shared_meta->ludo_buckets_offset = ludo_offset;
     shared_meta->lock_array_offset = lock_offset;
-    shared_meta->next_free_index = bench::FLAGS_nkeys;
+
+    const size_t effective_mem_threads = std::max<size_t>(1, std::min<size_t>(bench::FLAGS_mem_threads, kMaxNumaLanes));
+    shared_meta->mem_threads = static_cast<uint32_t>(effective_mem_threads);
+    shared_meta->next_free_index = bench::FLAGS_nkeys + effective_mem_threads;
+    for (size_t lane = 0; lane < kMaxNumaLanes; ++lane) {
+        if (lane < effective_mem_threads) {
+            shared_meta->lane_next_free_index[lane] = bench::FLAGS_nkeys + lane;
+        } else {
+            shared_meta->lane_next_free_index[lane] = packed_entries;
+        }
+    }
     msync(shared_meta, sizeof(SharedNumaRegistry), MS_SYNC);
 
     server_state = new ServerNumaState();
@@ -170,7 +184,12 @@ auto setup_ludo_table() -> bool {
 
 void register_numa_server() {
     // Register with global manager
-    NumaServerManager::instance().register_server_state(kDefaultServerName, server_state);
+    NumaServerManager::instance().register_server_state(g_server_name, server_state);
+    NumaServerManager::instance().register_server_state("default", server_state);
+
+    for (u64 i = 0; i < effective_mem_threads; ++i) {
+        NumaServerManager::instance().register_server_state("b" + std::to_string(i), server_state);
+    }
 
     if (server_state->shared_meta) {
         server_state->shared_meta->ready = 1;
@@ -183,6 +202,8 @@ void register_numa_server() {
     LOG(2) << "  - packed_data at: " << server_state->packed_data_ptr;
     LOG(2) << "  - num_buckets: " << server_state->num_buckets;
     LOG(2) << "  - num_data_entries: " << server_state->num_data_entries;
-    LOG(2) << "  - shared meta: " << numa_meta_name(kDefaultServerName);
-    LOG(2) << "  - shared region: " << numa_region_name(kDefaultServerName);
+    LOG(2) << "  - mem_threads(lanes): " << static_cast<u64>(server_state->shared_meta ? server_state->shared_meta->mem_threads : 1);
+    LOG(2) << "  - server name: " << g_server_name;
+    LOG(2) << "  - shared meta: " << numa_meta_name(g_server_name);
+    LOG(2) << "  - shared region: " << numa_region_name(g_server_name);
 }
