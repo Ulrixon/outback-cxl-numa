@@ -187,7 +187,10 @@ void register_numa_server() {
     NumaServerManager::instance().register_server_state(g_server_name, server_state);
     NumaServerManager::instance().register_server_state("default", server_state);
 
-    for (u64 i = 0; i < effective_mem_threads; ++i) {
+    const u64 lane_count = (server_state->shared_meta && server_state->shared_meta->mem_threads > 0)
+        ? static_cast<u64>(server_state->shared_meta->mem_threads)
+        : 1;
+    for (u64 i = 0; i < lane_count; ++i) {
         NumaServerManager::instance().register_server_state("b" + std::to_string(i), server_state);
     }
 
