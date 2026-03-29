@@ -1,6 +1,10 @@
 #include <iostream>
 #include <stdexcept>
 #include <algorithm>
+#include <atomic>
+#include <csignal>
+#include <sys/mman.h>
+#include <unistd.h>
 #include <gflags/gflags.h>
 
 #include "r2/src/thread.hh"                   /// Thread
@@ -22,13 +26,67 @@ DEFINE_int32(numa_node, 1, "NUMA node to allocate server memory");
 
 auto setup_ludo_table() -> bool;
 void register_numa_server();
+void cleanup_numa_ipc();
+void install_signal_handlers();
 
 std::string g_server_name = "default";
+std::atomic<bool> g_cleanup_done(false);
+volatile sig_atomic_t g_stop_requested = 0;
+size_t g_shared_region_size = 0;
+
+void signal_handler(int) {
+    g_stop_requested = 1;
+    running = false;
+}
+
+void install_signal_handlers() {
+    struct sigaction sa {};
+    sa.sa_handler = signal_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGINT, &sa, nullptr);
+    sigaction(SIGTERM, &sa, nullptr);
+}
+
+void cleanup_numa_ipc() {
+    if (g_cleanup_done.exchange(true)) {
+        return;
+    }
+
+    if (server_state && server_state->shared_meta) {
+        server_state->shared_meta->ready = 0;
+        msync(server_state->shared_meta, sizeof(SharedNumaRegistry), MS_SYNC);
+    }
+
+    if (server_state && server_state->shared_meta) {
+        munmap(server_state->shared_meta, sizeof(SharedNumaRegistry));
+        server_state->shared_meta = nullptr;
+    }
+
+    if (server_state && server_state->shared_region_base && g_shared_region_size > 0) {
+        munmap(server_state->shared_region_base, g_shared_region_size);
+        server_state->shared_region_base = nullptr;
+    }
+
+    if (server_state && server_state->shared_meta_fd >= 0) {
+        close(server_state->shared_meta_fd);
+        server_state->shared_meta_fd = -1;
+    }
+
+    if (server_state && server_state->shared_region_fd >= 0) {
+        close(server_state->shared_region_fd);
+        server_state->shared_region_fd = -1;
+    }
+
+    shm_unlink(numa_meta_name(g_server_name).c_str());
+    shm_unlink(numa_region_name(g_server_name).c_str());
+}
 
 int main(int argc, char **argv) {
     gflags::ParseCommandLineFlags(&argc, &argv, false);
 
     g_server_name = make_numa_server_name(bench::FLAGS_server_addr);
+    install_signal_handlers();
 
     // Initialize NUMA
     init_numa();
@@ -42,7 +100,10 @@ int main(int argc, char **argv) {
     bench::load_data();
 
     LOG(2) << "[Server setup ludo table on NUMA node] ...";
-    setup_ludo_table();
+    if (!setup_ludo_table()) {
+        cleanup_numa_ipc();
+        return g_stop_requested ? 130 : -1;
+    }
 
     LOG(2) << "[Register NUMA server state] ...";
     register_numa_server();
@@ -50,12 +111,13 @@ int main(int argc, char **argv) {
     running = true;
 
     size_t current_sec = 0;
-    while (current_sec < bench::FLAGS_seconds + 10) {
+    while (current_sec < bench::FLAGS_seconds + 10 && !g_stop_requested) {
         sleep(1);
         ++current_sec;
     }
 
     running = false;
+    cleanup_numa_ipc();
 
     LOG(4) << "NUMA server finishes";
     return 0;
@@ -67,6 +129,9 @@ auto setup_ludo_table() -> bool {
     // Build control-plane lookup first so we can derive final bucket count
     ludo_maintenance_t ludo_maintenance_unit(1024);
     for (uint64_t i = 0; i < bench::FLAGS_nkeys; i++) {
+        if (g_stop_requested) {
+            return false;
+        }
         KeyType key = bench::exist_keys[i];
         ludo_maintenance_unit.insert(key, i);
         r2::compile_fence();
@@ -85,6 +150,7 @@ auto setup_ludo_table() -> bool {
     size_t ludo_offset = align_up(packed_offset + packed_array_size, 64);
     size_t lock_offset = align_up(ludo_offset + ludo_buckets_array_size, 64);
     size_t total_size = align_up(lock_offset + lock_array_size, 4096);
+    g_shared_region_size = total_size;
 
     SharedNumaRegistry* shared_meta = nullptr;
     int shared_meta_fd = -1;
@@ -119,6 +185,9 @@ auto setup_ludo_table() -> bool {
 
     // Load packed data into shared mapped region
     for (uint64_t i = 0; i < bench::FLAGS_nkeys; i++) {
+        if (g_stop_requested) {
+            return false;
+        }
         KeyType key = bench::exist_keys[i];
         packed_data->bulk_load_data(key, sizeof(V), i);
         r2::compile_fence();
