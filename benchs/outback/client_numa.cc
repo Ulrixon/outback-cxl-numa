@@ -56,9 +56,9 @@ int main(int argc, char **argv) {
 
     LOG(2) << "[Connect to NUMA server] ...";
     const std::string server_name = get_numa_server_name_for_client();
-    if (!connect_to_numa_server(server_name)) {
-        LOG(4) << "Failed to connect to NUMA server";
-        return -1;
+    while (!connect_to_numa_server(server_name)) {
+        LOG(2) << "Waiting for NUMA server to be ready...";
+        sleep(2);
     }
 
     LOG(2) << "[Run benchmark] ...";

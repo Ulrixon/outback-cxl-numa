@@ -88,6 +88,10 @@ int main(int argc, char **argv) {
     g_server_name = make_numa_server_name(bench::FLAGS_server_addr);
     install_signal_handlers();
 
+    // Clean up any stale IPC states before starting
+    shm_unlink(numa_meta_name(g_server_name).c_str());
+    shm_unlink(numa_region_name(g_server_name).c_str());
+
     // Initialize NUMA
     init_numa();
     LOG(2) << "[NUMA initialized] Current node: " << get_current_numa_node();

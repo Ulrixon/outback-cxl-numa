@@ -217,11 +217,27 @@ inline bool connect_to_numa_server(const std::string& server_name = "default") {
 
     if (remote_registry->magic != kNumaMetaMagic || remote_registry->ready == 0) {
         LOG(4) << "NUMA shared registry not ready for server: " << server_name;
+        if (remote_registry) {
+            munmap(remote_registry, sizeof(SharedNumaRegistry));
+            remote_registry = nullptr;
+        }
+        if (remote_registry_fd >= 0) {
+            close(remote_registry_fd);
+            remote_registry_fd = -1;
+        }
         return false;
     }
 
     if (!open_shared_numa_region(server_name, remote_registry->region_size, &remote_region_base, &remote_region_fd)) {
         LOG(4) << "Failed to map NUMA shared region for server: " << server_name;
+        if (remote_registry) {
+            munmap(remote_registry, sizeof(SharedNumaRegistry));
+            remote_registry = nullptr;
+        }
+        if (remote_registry_fd >= 0) {
+            close(remote_registry_fd);
+            remote_registry_fd = -1;
+        }
         return false;
     }
 
