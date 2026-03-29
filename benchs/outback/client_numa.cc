@@ -252,7 +252,7 @@ void* numa_client_worker(void* param) {
 
     uint32_t effective_lanes = (remote_registry && remote_registry->mem_threads > 0)
         ? std::min<uint32_t>(remote_registry->mem_threads, static_cast<uint32_t>(kMaxNumaLanes))
-        : static_cast<uint32_t>(std::max(1, FLAGS_mem_threads));
+        : static_cast<uint32_t>(std::max<uint64_t>(uint64_t(1), FLAGS_mem_threads));
     uint32_t lane = (static_cast<uint32_t>(std::max(0, FLAGS_start_threads)) + thread_id) % effective_lanes;
     set_remote_lane_id(lane);
     
