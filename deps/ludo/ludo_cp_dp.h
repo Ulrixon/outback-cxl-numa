@@ -24,8 +24,6 @@
 #include "outback/ludo_seed.hh"
 #include "outback/ludo_slot.hh"
 
-inline double g_ludo_load_factor = 0.95;
-
 using namespace outback;
 // Class for efficiently storing key->value mappings when the size is
 // known in advance and the keys are pre-hashed into uint64s.
