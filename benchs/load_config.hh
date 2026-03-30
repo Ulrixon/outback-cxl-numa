@@ -58,11 +58,13 @@ struct BenchmarkConfig {
   std::vector<Statics> statics;
 } BenConfig;
 
-// Using an external declaration to set the load factor
+// The load factor is global and defined in cuckoo_ht.h
+}
 extern double g_ludo_load_factor;
+namespace bench {
 
 void load_benchmark_config() {
-  g_ludo_load_factor = FLAGS_load_factor;
+  ::g_ludo_load_factor = FLAGS_load_factor;
   BenConfig.nkeys     = FLAGS_nkeys;
   BenConfig.non_nkeys = FLAGS_non_nkeys;
   BenConfig.bench_nkeys = FLAGS_bench_nkeys;

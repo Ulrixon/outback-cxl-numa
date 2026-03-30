@@ -28,7 +28,7 @@
 
 #define COMPILER_BARRIER() asm volatile("" ::: "memory")
 
-inline double g_ludo_load_factor = 0.95;
+__attribute__((weak)) double g_ludo_load_factor = 0.95;
 
 using namespace std;
 // Class for efficiently storing key->value mappings when the size is
