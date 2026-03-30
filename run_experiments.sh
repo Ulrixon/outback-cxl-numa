@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration
-WORKLOAD="ycsbf"
+WORKLOAD="ycsbd"
 SECONDS=120
 SERVER_SECONDS=500
 NKEYS=50000000
