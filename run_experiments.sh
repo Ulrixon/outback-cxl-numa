@@ -126,18 +126,6 @@ run_experiment() {
 
 # Parameters: Description, Client_Membind, Server_Membind, Server_NumaNode, Threads
 
-# 1. 1MN 1CN 1 thread (Cross-CPU / CXL Emulation)
-run_experiment "1MN 1CN 1 thread" 0 1 1 1
-
-# 2. 1MN 1CN 4 thread on CPU (Cross-CPU / CXL Emulation - multiple threads on same core)
-run_experiment "1MN 1CN 4 thread on CPU (same core)" 0 1 1 4 "2,2,2,2"
-
-# 3. 1MN 1CN 2thread on different CPU (Cross-CPU / CXL Emulation)
-run_experiment "1MN 1CN 2 thread on different CPU" 0 1 1 2
-
-# 4. 1MN 1CN 4thread on different CPU (Cross-CPU / CXL Emulation)
-run_experiment "1MN 1CN 4 thread on different CPU" 0 1 1 4
-
 # 5. 1MN 1CN 8thread on different CPU (Cross-CPU / CXL Emulation)
 run_experiment "1MN 1CN 8 thread on different CPU" 0 1 1 8
 
