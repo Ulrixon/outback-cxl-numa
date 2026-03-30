@@ -93,7 +93,7 @@ public:
   void Clear(uint32_t num_entries) {
     entryCount = 0;
     cpq_.reset();
-    num_entries /= kLoadFactor;
+    num_entries /= g_ludo_load_factor;
     num_buckets_ = (num_entries + kSlotsPerBucket - 1) / kSlotsPerBucket;
     // Very small cuckoo tables don't work, because the probability
     // of having same-bucket hashes is large.  We compromise for those
@@ -266,8 +266,7 @@ public:
   // to avoid the need for a table rebuild on insertion failure.
   // 0.94 is achievable, but 0.85 is faster and keeps the code simple
   // at the cost of a small amount of memory.
-  // NOTE:  0 < kLoadFactor <= 1.0
-  static constexpr double kLoadFactor = 0.95;
+  // NOTE:  0 < g_ludo_load_factor <= 1.0
   
   // Cuckoo insert:  The maximum number of entries to scan should be ~400
   // (Source:  Personal communication with Michael Mitzenmacher;  empirical
@@ -472,7 +471,7 @@ public:
     return false;
   }
   
-  // Set upon initialization: num_entries / kLoadFactor / kSlotsPerBucket.
+  // Set upon initialization: num_entries / g_ludo_load_factor / kSlotsPerBucket.
   uint32_t num_buckets_;
   std::vector<Bucket> buckets_;
   

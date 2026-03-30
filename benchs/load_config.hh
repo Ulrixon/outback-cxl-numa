@@ -24,6 +24,9 @@ DEFINE_string(dists, "uniform", "The request keys distribution only for ycsb");
 DEFINE_double(zip_const, 0.99, "The default zipfian dist for skewness");
 DEFINE_uint64(nic_idx, 2, "The index of the NIC used on this machine");
 
+// ludo config
+DEFINE_double(load_factor, 0.95, "DMPH table load factor");
+
 // test config
 DEFINE_uint64(mem_threads, 1, "Server threads.");
 DEFINE_uint64(threads, 2, "Client threads.");
@@ -55,7 +58,11 @@ struct BenchmarkConfig {
   std::vector<Statics> statics;
 } BenConfig;
 
+// Using an external declaration to set the load factor
+extern double g_ludo_load_factor;
+
 void load_benchmark_config() {
+  g_ludo_load_factor = FLAGS_load_factor;
   BenConfig.nkeys     = FLAGS_nkeys;
   BenConfig.non_nkeys = FLAGS_non_nkeys;
   BenConfig.bench_nkeys = FLAGS_bench_nkeys;

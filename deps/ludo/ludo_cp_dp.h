@@ -24,6 +24,8 @@
 #include "outback/ludo_seed.hh"
 #include "outback/ludo_slot.hh"
 
+inline double g_ludo_load_factor = 0.95;
+
 using namespace outback;
 // Class for efficiently storing key->value mappings when the size is
 // known in advance and the keys are pre-hashed into uint64s.
@@ -85,8 +87,7 @@ public:
   // to avoid the need for a table rebuild on insertion failure.
   // 0.94 is achievable, but 0.85 is faster and keeps the code simple
   // at the cost of a small amount of memory.
-  // NOTE:  0 < kLoadFactor <= 1.0
-  static constexpr double kLoadFactor = 0.95;
+  // NOTE:  0 < g_ludo_load_factor <= 1.0
   
   // Cuckoo insert:  The maximum number of entries to scan should be ~400
   // (Source:  Personal communication with Michael Mitzenmacher;  empirical
@@ -136,7 +137,7 @@ template<class K, class V, uint VL = sizeof(V) * 8>
 class ControlPlaneLudo : public LudoCommon<K, V, VL> {
 public:
   using LudoCommon<K, V, VL>::kSlotsPerBucket;
-  using LudoCommon<K, V, VL>::kLoadFactor;
+  // using LudoCommon<K, V, VL>::kLoadFactor;
   using LudoCommon<K, V, VL>::kMaxBFSPathLen;
   
   using LudoCommon<K, V, VL>::VDMask;
@@ -168,7 +169,7 @@ public:
   
   ControlPlaneOthello<K, uint8_t, 1, 0, true> locator;
   
-  // Set upon initialization: num_entries / kLoadFactor / kSlotsPerBucket.
+  // Set upon initialization: num_entries / g_ludo_load_factor / kSlotsPerBucket.
   std::vector<Bucket> buckets_, oldBuckets;
   
   virtual void setSeed(uint32_t s) {
@@ -187,7 +188,7 @@ public:
     
     num_buckets_ = 64U;
     
-    for (capacity = num_buckets_ * kLoadFactor * kSlotsPerBucket; capacity < capacity_; capacity = num_buckets_ * kLoadFactor * kSlotsPerBucket)
+    for (capacity = num_buckets_ * g_ludo_load_factor * kSlotsPerBucket; capacity < capacity_; capacity = num_buckets_ * g_ludo_load_factor * kSlotsPerBucket)
       num_buckets_ <<= 1U;
     
     buckets_.resize(num_buckets_, empty_bucket);
@@ -291,8 +292,8 @@ public:
     targetCapacity = max(nKeys, max(targetCapacity, 256U));
     
     uint64_t nextNbuckets = 64U;
-    uint64_t nextCapacity = nextNbuckets * kLoadFactor * kSlotsPerBucket;
-    for (; nextCapacity < targetCapacity; nextCapacity = nextNbuckets * kLoadFactor * kSlotsPerBucket)
+    uint64_t nextCapacity = nextNbuckets * g_ludo_load_factor * kSlotsPerBucket;
+    for (; nextCapacity < targetCapacity; nextCapacity = nextNbuckets * g_ludo_load_factor * kSlotsPerBucket)
       nextNbuckets <<= 1U;
     
     bool shrink = nextNbuckets < num_buckets_;
@@ -929,7 +930,7 @@ template<class K, class V, uint VL = sizeof(V) * 8>
 class DataPlaneLudo : public LudoCommon<K, V, VL> {
 public:
   using LudoCommon<K, V, VL>::kSlotsPerBucket;
-  using LudoCommon<K, V, VL>::kLoadFactor;
+  // using LudoCommon<K, V, VL>::kLoadFactor;
   using LudoCommon<K, V, VL>::kMaxBFSPathLen;
   
   using LudoCommon<K, V, VL>::VDMask;
@@ -1019,8 +1020,8 @@ public:
     targetCapacity = max(targetCapacity, 256U);
     
     uint64_t nextNbuckets = 64U;
-    uint64_t nextCapacity = nextNbuckets * kLoadFactor * kSlotsPerBucket;
-    for (; nextCapacity < targetCapacity; nextCapacity = nextNbuckets * kLoadFactor * kSlotsPerBucket)
+    uint64_t nextCapacity = nextNbuckets * g_ludo_load_factor * kSlotsPerBucket;
+    for (; nextCapacity < targetCapacity; nextCapacity = nextNbuckets * g_ludo_load_factor * kSlotsPerBucket)
       nextNbuckets <<= 1U;
     
     num_buckets_ = nextNbuckets;
