@@ -2,7 +2,7 @@
 
 # Configuration
 WORKLOAD="ycsbd"
-SECONDS=120
+EXP_SECONDS=120
 SERVER_SECONDS=500
 NKEYS=50000000
 BENCH_NKEYS=10000000
@@ -82,7 +82,7 @@ run_experiment() {
         --nkeys=$NKEYS \
         --bench_nkeys=$BENCH_NKEYS \
         --threads=$THREADS \
-        --seconds=$SECONDS \
+        --seconds=$EXP_SECONDS \
         --mem_threads=$MEM_THREADS \
         --coros=$COROS \
         --workloads=$WORKLOAD > client_out.log 2>&1

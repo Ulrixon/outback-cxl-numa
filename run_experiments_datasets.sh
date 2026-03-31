@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Configuration defaults
-SECONDS=120
+EXP_SECONDS=120
 SERVER_SECONDS=500
 BENCH_NKEYS=10000000
 COROS=2
@@ -112,7 +112,7 @@ run_experiment() {
         --nkeys=$NKEYS \
         --bench_nkeys=$BENCH_NKEYS \
         --threads=$THREAD_COUNT \
-        --seconds=$SECONDS \
+        --seconds=$EXP_SECONDS \
         --mem_threads=$MEM_THREADS \
         --coros=$COROS \
         --load_factor=$LOAD_FACTOR \
