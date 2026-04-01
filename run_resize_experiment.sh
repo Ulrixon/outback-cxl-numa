@@ -176,16 +176,17 @@ run_resize_trial() {
         > "${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
 
-    echo "[$(date +%T)] Waiting for server to be ready (up to ${SERVER_STARTUP_WAIT} s)..."
+    echo "[$(date +%T)] Waiting for server to be ready (no timeout)..."
     local waited=0
     local server_ready=0
-    while (( waited < SERVER_STARTUP_WAIT )); do
+    while true; do
         sleep 2
         waited=$(( waited + 2 ))
 
-        # Bail early if the server process vanished
+        # Bail only if the server process truly vanished
         if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
             echo "ERROR: server exited prematurely after ${waited} s.  Check ${SERVER_LOG}"
+            cat "${SERVER_LOG}" | tail -20
             return 1
         fi
 
@@ -195,13 +196,12 @@ run_resize_trial() {
             echo "[$(date +%T)] Server ready after ${waited} s."
             break
         fi
-    done
 
-    if [[ $server_ready -eq 0 ]]; then
-        echo "ERROR: server did not become ready within ${SERVER_STARTUP_WAIT} s.  Check ${SERVER_LOG}"
-        sudo kill -KILL "${SERVER_PID}" 2>/dev/null || true
-        return 1
-    fi
+        # Progress report every 30 s
+        if (( waited % 30 == 0 )); then
+            echo "[$(date +%T)] Still waiting for server... (${waited} s elapsed)"
+        fi
+    done
 
     # ── Start client ────────────────────────────────────────────────────────
     echo "[$(date +%T)] Starting client with ${THREADS} threads on cores ${CLIENT_CORES} ..."
