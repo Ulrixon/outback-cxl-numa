@@ -113,7 +113,7 @@ inline bool remap_to_current_epoch(const std::string& server_name) {
     // Map new versioned region
     void* new_base = nullptr;
     int   new_fd   = -1;
-    const auto& new_ep = remote_registry->epoch[new_ver % kMaxEpochSlots];
+    auto& new_ep = remote_registry->epoch[new_ver % kMaxEpochSlots]; // non-const: fetch_sub below
     if (!open_shared_numa_region(server_name, new_ep.region_size, new_ver,
                                  &new_base, &new_fd)) {
         return false;
@@ -181,7 +181,7 @@ inline auto numa_search(const KeyType& key) -> ::r2::Option<ValType>
     KeyType stored_key;
     pd->read_key(addr, stored_key);
     if (stored_key == key) {
-        return pd->rawArray[addr].data;
+        ValType v = pd->rawArray[addr].data; return v; // copy: packed field can't bind to ref
     }
 
     // ── MakeupGet (plan §14) ──────────────────────────────────────────────────
@@ -197,17 +197,11 @@ inline auto numa_search(const KeyType& key) -> ::r2::Option<ValType>
         KeyType k;
         pd->read_key(a, k);
         if (k == key) {
-            return pd->rawArray[a].data;
+            ValType v = pd->rawArray[a].data; return v; // copy: packed field can't bind to ref
         }
     }
 
-    // Overflow/cache fallback: check LRU cache if available
-    if (lru_cache) {
-        ValType cached_val = lru_cache->get(key);
-        if (cached_val != ValType{}) {
-            return cached_val;
-        }
-    }
+    // LRU overflow cache lives server-side only; not accessible from client.
 
     return {};
 }
@@ -355,7 +349,7 @@ inline bool connect_to_numa_server(const std::string& server_name = "default") {
 
     // Wait until epoch is published
     uint64_t cur_ver = remote_registry->current_version.load(std::memory_order_acquire);
-    const auto& ep   = remote_registry->epoch[cur_ver % kMaxEpochSlots];
+    auto& ep   = remote_registry->epoch[cur_ver % kMaxEpochSlots]; // non-const: fetch_sub below
     if (ep.published.load(std::memory_order_acquire) == 0) {
         munmap(remote_registry, sizeof(SharedNumaRegistry));
         remote_registry    = nullptr;
