@@ -40,7 +40,7 @@ WORKLOAD="ycsbd"                   # YCSB D: 95% Get, 5% Insert
 MEM_THREADS=1                      # Memory-node server thread count
 COROS=4                            # Client coroutines per thread
 EXP_SECONDS=120                    # Benchmark duration per run (seconds)
-SERVER_STARTUP_WAIT=20             # Seconds to wait for server/Ludo warmup
+SERVER_STARTUP_WAIT=120            # Max seconds to wait for server ready signal
 SERVER_SHUTDOWN_WAIT=5             # Seconds after SIGINT for shm cleanup
 
 # Resize thresholds (fraction of packed_entries = 2×NKEYS = 40 M)
@@ -176,12 +176,30 @@ run_resize_trial() {
         > "${SERVER_LOG}" 2>&1 &
     SERVER_PID=$!
 
-    echo "[$(date +%T)] Waiting ${SERVER_STARTUP_WAIT} s for Ludo table construction..."
-    sleep "${SERVER_STARTUP_WAIT}"
+    echo "[$(date +%T)] Waiting for server to be ready (up to ${SERVER_STARTUP_WAIT} s)..."
+    local waited=0
+    local server_ready=0
+    while (( waited < SERVER_STARTUP_WAIT )); do
+        sleep 2
+        waited=$(( waited + 2 ))
 
-    # Confirm server is still alive
-    if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
-        echo "ERROR: server exited prematurely.  Check ${SERVER_LOG}"
+        # Bail early if the server process vanished
+        if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+            echo "ERROR: server exited prematurely after ${waited} s.  Check ${SERVER_LOG}"
+            return 1
+        fi
+
+        # The server logs "resize orchestrator started" once it is fully ready
+        if grep -q 'resize orchestrator started' "${SERVER_LOG}" 2>/dev/null; then
+            server_ready=1
+            echo "[$(date +%T)] Server ready after ${waited} s."
+            break
+        fi
+    done
+
+    if [[ $server_ready -eq 0 ]]; then
+        echo "ERROR: server did not become ready within ${SERVER_STARTUP_WAIT} s.  Check ${SERVER_LOG}"
+        sudo kill -KILL "${SERVER_PID}" 2>/dev/null || true
         return 1
     fi
 
