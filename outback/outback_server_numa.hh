@@ -8,6 +8,7 @@
 
 #include "outback/trait_numa.hpp"
 
+using namespace test;
 using namespace xstore::transport;
 using namespace xstore::numa;
 using namespace outback;
@@ -15,7 +16,7 @@ using namespace outback;
 /*****  GLOBAL VARIABLES ******/
 volatile bool running = true;
 std::atomic<size_t> ready_threads(0);
-volatile uint8_t* lockArray;
+std::mutex* mutexArray;
 
 /*****  LUDO BUCKETS AND UNDERLYING DATA (ON NUMA NODE) *****/
 lru_cache_t* lru_cache;
@@ -60,10 +61,26 @@ void outback_get_direct(const size_t loc, const KeyType* key_ptr, ReplyValue* re
 
 // PUT - Direct memory access version
 void outback_put_direct(const size_t loc, const KeyType& key, const ValType& val, ReplyValue* reply) {
+    // If a resize is in progress and structural mutations are blocked,
+    // enqueue the insert for later replay rather than writing to the old region.
+    if (xstore::transport::g_structural_mutations_blocked.load(
+            std::memory_order_acquire)) {
+        if (xstore::transport::g_resize_orch_ptr &&
+            xstore::transport::g_defer_insert_fn) {
+            xstore::transport::g_defer_insert_fn(
+                xstore::transport::g_resize_orch_ptr,
+                static_cast<uint64_t>(key),
+                static_cast<uint64_t>(val));
+        }
+        reply->status = false;
+        reply->val    = static_cast<uint64_t>(xstore::transport::OpStatus::DEFERRED);
+        return;
+    }
+
     FastHasher64<K> h;
     
     size_t row = loc / SLOTS_NUM_BUCKET;
-    numa_lock_byte(&lockArray[row]);
+    std::unique_lock<std::mutex> lock(mutexArray[row]);
     h.setSeed(ludo_lookup_unit->buckets[row].seed);
     uint8_t slot = uint8_t(h(key) >> 62);
     
@@ -109,7 +126,7 @@ void outback_put_direct(const size_t loc, const KeyType& key, const ValType& val
             // Bucket is full - need to update seed or handle overflow
             // For now, cache it
             if (lru_cache) {
-                lru_cache->insert(key, val);
+                lru_cache->put(key, val);
                 ludo_buckets->set_cachebit(row, slot);
             }
             reply->status = true;
@@ -121,14 +138,12 @@ void outback_put_direct(const size_t loc, const KeyType& key, const ValType& val
             reply->val = 0;
             break;
     }
-
-    numa_unlock_byte(&lockArray[row]);
 }
 
 // UPDATE - Direct memory access version
 void outback_update_direct(const size_t loc, const KeyType& key, const ValType& val, ReplyValue* reply) {
     size_t row = loc / SLOTS_NUM_BUCKET;
-    numa_lock_byte(&lockArray[row]);
+    std::unique_lock<std::mutex> lock(mutexArray[row]);
     
     auto addr = ludo_buckets->read_addr(row, loc % SLOTS_NUM_BUCKET);
     KeyType key_;
@@ -142,14 +157,27 @@ void outback_update_direct(const size_t loc, const KeyType& key, const ValType& 
         reply->status = false;
         reply->val = 0;
     }
-
-    numa_unlock_byte(&lockArray[row]);
 }
 
 // REMOVE - Direct memory access version
 void outback_remove_direct(const size_t loc, const KeyType& key, ReplyValue* reply) {
+    // If a resize is in progress and structural mutations are blocked,
+    // enqueue the delete for later replay rather than modifying the old region.
+    if (xstore::transport::g_structural_mutations_blocked.load(
+            std::memory_order_acquire)) {
+        if (xstore::transport::g_resize_orch_ptr &&
+            xstore::transport::g_defer_delete_fn) {
+            xstore::transport::g_defer_delete_fn(
+                xstore::transport::g_resize_orch_ptr,
+                static_cast<uint64_t>(key));
+        }
+        reply->status = false;
+        reply->val    = static_cast<uint64_t>(xstore::transport::OpStatus::DEFERRED);
+        return;
+    }
+
     size_t row = loc / SLOTS_NUM_BUCKET;
-    numa_lock_byte(&lockArray[row]);
+    std::unique_lock<std::mutex> lock(mutexArray[row]);
     
     auto addr = ludo_buckets->read_addr(row, loc % SLOTS_NUM_BUCKET);
     auto res = packed_data->remove_data_with_key_check(addr, key);
@@ -159,8 +187,6 @@ void outback_remove_direct(const size_t loc, const KeyType& key, ReplyValue* rep
     
     reply->status = true;
     reply->val = 0;
-
-    numa_unlock_byte(&lockArray[row]);
 }
 
 // SCAN - Direct memory access version

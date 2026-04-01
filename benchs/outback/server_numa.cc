@@ -11,6 +11,7 @@
 #include "xutils/numa_memory.hh"              /// NUMA memory
 
 #include "outback/outback_server_numa.hh"
+#include "outback/outback_resize.hh"
 #include "benchs/load_config.hh"
 #include "benchs/load_data.hh"
 
@@ -33,6 +34,7 @@ std::string g_server_name = "default";
 std::atomic<bool> g_cleanup_done(false);
 volatile sig_atomic_t g_stop_requested = 0;
 size_t g_shared_region_size = 0;
+std::unique_ptr<outback::ResizeOrchestrator> g_resize_orchestrator;
 
 void signal_handler(int) {
     g_stop_requested = 1;
@@ -51,6 +53,11 @@ void install_signal_handlers() {
 void cleanup_numa_ipc() {
     if (g_cleanup_done.exchange(true)) {
         return;
+    }
+
+    if (g_resize_orchestrator) {
+        g_resize_orchestrator->stop();
+        g_resize_orchestrator.reset();
     }
 
     if (server_state && server_state->shared_meta) {
@@ -90,7 +97,7 @@ int main(int argc, char **argv) {
 
     // Clean up any stale IPC states before starting
     shm_unlink(numa_meta_name(g_server_name).c_str());
-    shm_unlink(numa_region_name(g_server_name).c_str());
+    shm_unlink(numa_region_name(g_server_name, 1).c_str());
 
     // Initialize NUMA
     init_numa();
@@ -166,7 +173,7 @@ auto setup_ludo_table() -> bool {
     void* shared_region_base = nullptr;
     int shared_region_fd = -1;
     if (!create_shared_numa_region(g_server_name, total_size, FLAGS_numa_node,
-                                   &shared_region_base, &shared_region_fd)) {
+                                   /*version=*/1, &shared_region_base, &shared_region_fd)) {
         LOG(4) << "Failed to create/map NUMA shared region";
         return false;
     }
@@ -199,24 +206,43 @@ auto setup_ludo_table() -> bool {
 
     delete generated_ludo_buckets;
 
+    // Allocate per-bucket mutex array (required by outback_put_direct / replay logic)
+    mutexArray = new std::mutex[num_buckets];
+
     // Allocate LRU cache (local)
     lru_cache = new lru_cache_t(2048, 10);
 
     // Publish shared metadata
-    shared_meta->magic = kNumaMetaMagic;
-    shared_meta->version = 1;
-    shared_meta->ready = 0;
+    // protocol_version, current_version, resize_state were set in map_numa_registry()
+    shared_meta->magic     = kNumaMetaMagic;
     shared_meta->numa_node = FLAGS_numa_node;
-    shared_meta->num_buckets = num_buckets;
-    shared_meta->num_data_entries = packed_entries;
-    shared_meta->region_size = total_size;
-    shared_meta->packed_array_offset = packed_offset;
-    shared_meta->ludo_buckets_offset = ludo_offset;
-    shared_meta->lock_array_offset = lock_offset;
+    shared_meta->ready     = 0;
+
+    // Populate epoch slot 1 (version 1 = first data region)
+    auto& ep1 = shared_meta->epoch[1];
+    ep1.version             = 1;
+    ep1.publish_ts_ns       = 0;
+    ep1.region_size         = total_size;
+    ep1.num_buckets         = num_buckets;
+    ep1.num_data_entries    = packed_entries;
+    ep1.packed_array_offset = packed_offset;
+    ep1.ludo_buckets_offset = ludo_offset;
+    ep1.lock_array_offset   = lock_offset;
+    ep1.global_depth        = 1;
+    ep1.directory_size      = 0;
+    ep1.directory_version   = 1;
+    ep1.clients_pending_ack.store(0, std::memory_order_relaxed);
+    ep1.active_readers.store(0,      std::memory_order_relaxed);
+    ep1.active_writers.store(0,      std::memory_order_relaxed);
+    ep1.published.store(1,           std::memory_order_release);
+    ep1.cleanup_allowed.store(0,     std::memory_order_relaxed);
+
+    // Configure resize thresholds (80 % and 95 % of packed_entries)
+    shared_meta->s_slow = static_cast<uint64_t>(packed_entries * 0.80);
+    shared_meta->s_stop = static_cast<uint64_t>(packed_entries * 0.95);
 
     const size_t effective_mem_threads = std::max<size_t>(1, std::min<size_t>(bench::FLAGS_mem_threads, kMaxNumaLanes));
     shared_meta->mem_threads = static_cast<uint32_t>(effective_mem_threads);
-    shared_meta->next_free_index = bench::FLAGS_nkeys + effective_mem_threads;
     for (size_t lane = 0; lane < kMaxNumaLanes; ++lane) {
         if (lane < effective_mem_threads) {
             shared_meta->lane_next_free_index[lane] = bench::FLAGS_nkeys + lane;
@@ -272,14 +298,22 @@ void register_numa_server() {
         msync(server_state->shared_meta, sizeof(SharedNumaRegistry), MS_SYNC);
     }
     
+    const auto& cur_ep = current_epoch(*server_state->shared_meta);
     LOG(2) << "Server state registered:";
     LOG(2) << "  - NUMA node: " << server_state->numa_node;
     LOG(2) << "  - ludo_buckets at: " << server_state->ludo_buckets_ptr;
     LOG(2) << "  - packed_data at: " << server_state->packed_data_ptr;
-    LOG(2) << "  - num_buckets: " << server_state->num_buckets;
-    LOG(2) << "  - num_data_entries: " << server_state->num_data_entries;
+    LOG(2) << "  - num_buckets: " << cur_ep.num_buckets;
+    LOG(2) << "  - num_data_entries: " << cur_ep.num_data_entries;
     LOG(2) << "  - mem_threads(lanes): " << static_cast<u64>(server_state->shared_meta ? server_state->shared_meta->mem_threads : 1);
     LOG(2) << "  - server name: " << g_server_name;
     LOG(2) << "  - shared meta: " << numa_meta_name(g_server_name);
-    LOG(2) << "  - shared region: " << numa_region_name(g_server_name);
+    LOG(2) << "  - shared region v1: " << numa_region_name(g_server_name, 1);
+
+    // Start resize orchestrator background thread
+    g_resize_orchestrator = std::make_unique<outback::ResizeOrchestrator>(
+        server_state->shared_meta, server_state, g_server_name, FLAGS_numa_node,
+        ludo_lookup_unit, mutexArray);
+    g_resize_orchestrator->start();
+    LOG(2) << "  - resize orchestrator started";
 }

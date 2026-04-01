@@ -1,4 +1,47 @@
-build
+# Build directories
+build/
+build_test/
+build_numa/
+CMakeFiles/
+cmake_install.cmake
+CMakeCache.txt
+Makefile
+
+# Compiled object and binary files
+*.o
+*.a
+*.so
+*.so.*
+*.dylib
+*.out
+*.exe
+*.elf
+
+# Dependency files
+*.d
+*.dep
+
+# Linker/compiler caches
+*.pch
+*.gch
+
+# CMake generated
+*.cmake
+!CMakeLists.txt
+
+# Python patch scripts (generated during development)
+patch*.py
+
+# Temp files
+*.tmp
+*.swp
+*.swo
+*~
+
+# Datasets
 datasets/*_uint64
+
+# Misc
 recycles
 .vscode
+
