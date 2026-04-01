@@ -35,6 +35,7 @@ struct ClientRegionState {
 
     int    region_fd          = -1;
     void*  region_base        = nullptr;
+    size_t region_size        = 0;   // saved at map time for correct munmap
 
     ludo_buckets_t*   ludo_buckets = nullptr;
     packed_data_t*    packed_data  = nullptr;
@@ -99,14 +100,12 @@ inline bool remap_to_current_epoch(const std::string& server_name) {
 
     // Unmap old region
     if (t_region.region_base && t_region.region_fd >= 0) {
-        // Old ludo_buckets/packed_data wrappers were created with new; delete them
-        if (t_region.ludo_buckets && t_region.ludo_buckets != remote_ludo_buckets) {
-            delete t_region.ludo_buckets;
-        }
-        if (t_region.packed_data && t_region.packed_data != remote_packed_data) {
-            delete t_region.packed_data;
-        }
-        munmap(t_region.region_base, ep.region_size /* old size – approx */);
+        // Wrappers are owned exclusively by this thread's t_region; safe to delete.
+        delete t_region.ludo_buckets;
+        delete t_region.packed_data;
+        t_region.ludo_buckets = nullptr;
+        t_region.packed_data  = nullptr;
+        munmap(t_region.region_base, t_region.region_size);
         close(t_region.region_fd);
     }
 
@@ -124,6 +123,7 @@ inline bool remap_to_current_epoch(const std::string& server_name) {
 
     t_region.region_base  = new_base;
     t_region.region_fd    = new_fd;
+    t_region.region_size  = new_ep.region_size;  // save for future munmap
     t_region.ludo_buckets = new ludo_buckets_t(ludo_mem, new_ep.num_buckets);
     t_region.packed_data  = new packed_data_t(base + new_ep.packed_array_offset,
                                               new_ep.num_data_entries);
@@ -132,11 +132,6 @@ inline bool remap_to_current_epoch(const std::string& server_name) {
     t_region.local_version    = new_ver;
     t_region.local_generation = remote_registry->generation.load(
                                     std::memory_order_relaxed);
-
-    // Also update global pointers for single-threaded / legacy paths
-    remote_ludo_buckets = t_region.ludo_buckets;
-    remote_packed_data  = t_region.packed_data;
-    remote_lock_array   = t_region.lock_array;
 
     // Acknowledge to server
     new_ep.clients_pending_ack.fetch_sub(1, std::memory_order_acq_rel);
@@ -170,8 +165,10 @@ inline auto numa_search(const KeyType& key) -> ::r2::Option<ValType>
 {
     maybe_check_version();
 
-    auto* lbs = remote_ludo_buckets;
-    auto* pd  = remote_packed_data;
+    // Use thread-local pointers (populated by remap); fall back to global only
+    // for the initial pre-remap state (before the first resize bumps generation).
+    auto* lbs = t_region.ludo_buckets ? t_region.ludo_buckets : remote_ludo_buckets;
+    auto* pd  = t_region.packed_data  ? t_region.packed_data  : remote_packed_data;
     if (!lbs || !pd) return {};
 
     auto loc  = ludo_lookup_unit->lookup_slot(key);
@@ -210,9 +207,9 @@ inline void numa_put(const KeyType& key, const ValType& val)
 {
     maybe_check_version();
 
-    auto* lbs  = remote_ludo_buckets;
-    auto* pd   = remote_packed_data;
-    auto* lock = remote_lock_array;
+    auto* lbs  = t_region.ludo_buckets ? t_region.ludo_buckets : remote_ludo_buckets;
+    auto* pd   = t_region.packed_data  ? t_region.packed_data  : remote_packed_data;
+    auto* lock = t_region.lock_array   ? t_region.lock_array   : remote_lock_array;
     if (!lbs || !pd || !lock) return;
 
     auto loc = ludo_lookup_unit->lookup_slot(key);
@@ -268,9 +265,9 @@ inline void numa_update(const KeyType& key, const ValType& val)
 {
     maybe_check_version();
 
-    auto* lbs  = remote_ludo_buckets;
-    auto* pd   = remote_packed_data;
-    auto* lock = remote_lock_array;
+    auto* lbs  = t_region.ludo_buckets ? t_region.ludo_buckets : remote_ludo_buckets;
+    auto* pd   = t_region.packed_data  ? t_region.packed_data  : remote_packed_data;
+    auto* lock = t_region.lock_array   ? t_region.lock_array   : remote_lock_array;
     if (!lbs || !pd || !lock) return;
 
     auto loc = ludo_lookup_unit->lookup_slot(key);
@@ -287,9 +284,9 @@ inline void numa_remove(const KeyType& key)
 {
     maybe_check_version();
 
-    auto* lbs  = remote_ludo_buckets;
-    auto* pd   = remote_packed_data;
-    auto* lock = remote_lock_array;
+    auto* lbs  = t_region.ludo_buckets ? t_region.ludo_buckets : remote_ludo_buckets;
+    auto* pd   = t_region.packed_data  ? t_region.packed_data  : remote_packed_data;
+    auto* lock = t_region.lock_array   ? t_region.lock_array   : remote_lock_array;
     if (!lbs || !pd || !lock) return;
 
     auto loc = ludo_lookup_unit->lookup_slot(key);
@@ -384,6 +381,7 @@ inline bool connect_to_numa_server(const std::string& server_name = "default") {
 
     t_region.region_base      = region_base;
     t_region.region_fd        = region_fd;
+    t_region.region_size      = ep.region_size;
     t_region.ludo_buckets     = new ludo_buckets_t(ludo_mem, ep.num_buckets);
     t_region.packed_data      = new packed_data_t(base + ep.packed_array_offset,
                                                   ep.num_data_entries);
