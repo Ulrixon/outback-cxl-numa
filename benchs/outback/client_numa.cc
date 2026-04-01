@@ -54,6 +54,27 @@ int main(int argc, char **argv) {
     LOG(2) << "[Setup Ludo table] ...";
     setup_ludo_table();
 
+    // ── Compute-node DMPH memory report (matches paper Fig. 16) ──────────────
+    if (ludo_lookup_unit) {
+        const uint64_t nb        = ludo_lookup_unit->num_buckets_;
+        const uint64_t seeds_b   = nb;                           // 1 uint8_t per bucket
+        const uint64_t othello_b = ludo_lookup_unit->locator.mem.size() * sizeof(uint64_t);
+        const double seeds_mb    = static_cast<double>(seeds_b)   / 1024.0 / 1024.0;
+        const double othello_mb  = static_cast<double>(othello_b) / 1024.0 / 1024.0;
+        const double total_mb    = seeds_mb + othello_mb;
+        LOG(2) << "[memory] Compute-node DMPH:"
+               << "  num_buckets=" << nb
+               << "  seeds_MB=" << seeds_mb
+               << "  othello_MB=" << othello_mb
+               << "  total_MB=" << total_mb
+               << "  load_factor=" << FLAGS_load_factor
+               << "  nkeys=" << FLAGS_nkeys;
+    }
+
+    if (FLAGS_memory_only) {
+        return 0;
+    }
+
     LOG(2) << "[Connect to NUMA server] ...";
     const std::string server_name = get_numa_server_name_for_client();
     while (!connect_to_numa_server(server_name)) {

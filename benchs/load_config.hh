@@ -26,6 +26,7 @@ DEFINE_uint64(nic_idx, 2, "The index of the NIC used on this machine");
 
 // ludo config
 DEFINE_double(load_factor, 0.95, "DMPH table load factor");
+DEFINE_bool(memory_only, false, "Print compute-node memory usage and exit (no server needed)");
 
 // test config
 DEFINE_uint64(mem_threads, 1, "Server threads.");

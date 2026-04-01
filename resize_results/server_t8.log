@@ -1,0 +1,82 @@
+[39m[numa_memory.hh:190] NUMA initialized. Available nodes: 2
+[0m[39m[server_numa.cc:106] [NUMA initialized] Current node: 0
+[0m[39m[server_numa.cc:107] [Server will use NUMA node] 1
+[0m[39m[server_numa.cc:108] [NUMA mode] --nic_idx=2 is accepted for CLI compatibility (not used).
+[0m[39m[server_numa.cc:111] [Outback server loading data] ...
+[0mbulk loading 476 MB database to warm up
+[32m[load_data.hh:216] load ycsb exist_keys number : 20000000
+[0m[32m[load_data.hh:217] load ycsb non_exist_keys number : 2000000
+[0m[32m[load_data.hh:218] load bench_keys number : 1
+[0m[32m[load_data.hh:85] ==== LOAD YCSB D workload =====
+[0m[32m[load_data.hh:107] Exist keys: 20000000
+[0m[32m[load_data.hh:108] nonExist keys: 2000000
+[0m[39m[server_numa.cc:115] [Server setup ludo table on NUMA node] ...
+[0mothello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+[39m[server_numa.cc:271] Ludo slots warmed up...
+[0m[39m[server_numa.cc:272] Ludo slots finished up...
+[0m[39m[server_numa.cc:121] [Register NUMA server state] ...
+[0m[39m[server_numa.cc:306] Server state registered:
+[0m[39m[server_numa.cc:307]   - NUMA node: 1
+[0m[39m[server_numa.cc:308]   - ludo_buckets at: 0x55ad2133bb40
+[0m[39m[server_numa.cc:309]   - packed_data at: 0x55ad2133d100
+[0m[39m[server_numa.cc:310]   - num_buckets: 8388608
+[0m[39m[server_numa.cc:311]   - num_data_entries: 40000000
+[0m[39m[server_numa.cc:312]   - mem_threads(lanes): 1
+[0m[39m[server_numa.cc:313]   - server name: localhost_8888
+[0m[39m[server_numa.cc:314]   - shared meta: /outback_numa_meta_localhost_8888
+[0m[39m[server_numa.cc:315]   - shared region v1: /outback_numa_region_localhost_8888_v1
+[0m[39m[server_numa.cc:322]   - resize orchestrator started
+[0m[resize] state -> PRE_RESIZE  ts_ms=298944536
+[resize] state -> COPYING  ts_ms=298950037
+[resize] state -> READY_TO_SWITCH  ts_ms=298952185
+[resize] state -> DRAIN_OLD  ts_ms=298957932
+[resize] state -> GC_PENDING  ts_ms=298958432
+[resize] state -> NORMAL  ts_ms=298960462
+[resize] state -> PRE_RESIZE  ts_ms=298960962
+[resize] state -> COPYING  ts_ms=298961462
+[resize] state -> READY_TO_SWITCH  ts_ms=298965760
+[resize] state -> DRAIN_OLD  ts_ms=298971751
+[resize] state -> GC_PENDING  ts_ms=298972251
+[resize] state -> NORMAL  ts_ms=298974487
+[resize] state -> PRE_RESIZE  ts_ms=298974987
+[resize] state -> COPYING  ts_ms=298975487
+[resize] state -> READY_TO_SWITCH  ts_ms=298984045
+[resize] state -> DRAIN_OLD  ts_ms=298985522
+[resize] state -> GC_PENDING  ts_ms=298986022
+[resize] state -> NORMAL  ts_ms=298988475
+[resize] state -> PRE_RESIZE  ts_ms=298988975
+[resize] state -> COPYING  ts_ms=298989475
+[resize] state -> READY_TO_SWITCH  ts_ms=299006578
+[resize] state -> DRAIN_OLD  ts_ms=299009031
+[resize] state -> GC_PENDING  ts_ms=299009531
+[resize] state -> NORMAL  ts_ms=299012437
+[resize] state -> PRE_RESIZE  ts_ms=299012937
+[resize] state -> COPYING  ts_ms=299013437
+[resize] state -> READY_TO_SWITCH  ts_ms=299047277
+[35m[server_numa.cc:135] NUMA server finishes
+[0m

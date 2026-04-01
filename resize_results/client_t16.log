@@ -1,0 +1,207 @@
+[39m[numa_memory.hh:190] NUMA initialized. Available nodes: 2
+[0m[39m[client_numa.cc:47] [NUMA initialized] Current node: 0
+[0m[39m[client_numa.cc:48] [NUMA mode] --nic_idx=2 is accepted for CLI compatibility (not used).
+[0m[39m[client_numa.cc:50] [Loading data] ...
+[0mbulk loading 476 MB database to warm up
+[32m[load_data.hh:216] load ycsb exist_keys number : 20000000
+[0m[32m[load_data.hh:217] load ycsb non_exist_keys number : 2000000
+[0m[32m[load_data.hh:218] load bench_keys number : 20000000
+[0m[32m[load_data.hh:85] ==== LOAD YCSB D workload =====
+[0m[32m[load_data.hh:107] Exist keys: 20000000
+[0m[32m[load_data.hh:108] nonExist keys: 2000000
+[0m[39m[client_numa.cc:54] [Setup Ludo table] ...
+[0mothello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+othello rebuild
+[39m[client_numa.cc:75] Ludo slots warmed up...
+[0m[39m[client_numa.cc:78] Ludo slots finished up...
+[0m[39m[client_numa.cc:57] [Connect to NUMA server] ...
+[0m[39m[client_numa.cc:100] [NUMA connect lane] b0 (compat), endpoint: localhost_8888
+[0m[39m[outback_client_numa.hh:401] Connected to shared NUMA server: localhost_8888 on node 1 (version 1)
+[0m[39m[client_numa.cc:64] [Run benchmark] ...
+[0m[39m[client_numa.cc:262] [Worker 0] Starting on NUMA node 0, lane b0
+[0m[39[[39mm39[client_numa.cc:262] [Worker 3] Starting on NUMA node 0, lane b0
+m[client_numa.cc:272] [micro] Worker: 0 Ready.
+[client_numa.cc:262] [Worker 2] Starting on NUMA node 0, lane b0
+[0m[0m[0m[[39m[client_numa.cc:272] [micro] Worker: 3 Ready.
+[0m39m[client_numa.cc:272] [micro] Worker: 2 Ready.
+[0m[[39m[client_numa.cc:262] [Worker 5] Starting on NUMA node 0, lane b0
+39m[client_numa.cc:262] [Worker 4] Starting on NUMA node 0, lane b0
+[39m[client_numa.cc:262] [Worker 1] Starting on NUMA node 0, lane b0
+[0m[0m[0m[39m[client_numa.cc:262] [Worker 6] Starting on NUMA node 0, lane b0
+[39m[client_numa.cc:272] [micro] Worker: 1 Ready.
+[0m[0m[39m[[client_numa.cc:272] [micro] Worker: 5 Ready.
+39m[client_numa.cc:272] [micro] Worker: 6 Ready.
+[0m[0m[[39m[client_numa.cc:272] [micro] Worker: 4 Ready.
+39[0mm[client_numa.cc:262] [Worker 7] Starting on NUMA node 0, lane b0
+[0m[39m[client_numa.cc:262] [Worker 8] Starting on NUMA node 0, lane b0
+[0m[39m[client_numa.cc:272] [micro] Worker: 7 Ready.
+[0m[39m[client_numa.cc:262] [Worker 10] Starting on NUMA node 0, lane b0
+[39m[client_numa.cc:272] [micro] Worker: 8 Ready.
+[0m[0m[[39m[client_numa.cc:272] [micro] Worker: 10 Ready.
+[0m39m[client_numa.cc:129] [Wait for workers ready] ...
+[0m[39m[client_numa.cc:262] [Worker 11] Starting on NUMA node 0, lane b0
+[0m[39m[client_numa.cc:262] [Worker 9] Starting on NUMA node 0, lane b0
+[0m[39m[client_numa.cc:272] [micro] Worker: 11 Ready.
+[0m[39m[client_numa.cc:272] [micro] Worker: 9 Ready.
+[0m[39m[client_numa.cc:262] [Worker 13] Starting on NUMA node 0, lane b0
+[0m[[39m[client_numa.cc:272] [micro] Worker: 13 Ready.
+[0m[[39m[client_numa.cc:262] [Worker 15] Starting on NUMA node 0, lane b0
+39[0mm39m[39m[client_numa.cc:262] [Worker 14] Starting on NUMA node 0, lane b0
+[client_numa.cc:272] [micro] Worker: 15 Ready.
+[client_numa.cc:262] [Worker 12] Starting on NUMA node 0, lane b0
+[0m[0m[0m[39m[client_numa.cc:272] [micro] Worker: 12 Ready.
+[0m[39m[client_numa.cc:272] [micro] Worker: 14 Ready.
+[0m[39m[client_numa.cc:159] [micro] >>> sec 0 throughput: 39837972, latency: 0.327386us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 1 throughput: 39788330, latency: 0.327901us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 2 throughput: 18065815, latency: 0.37616us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 3 throughput: 31381100, latency: 0.711759us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 4 throughput: 33276266, latency: 0.405924us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 5 throughput: 32919581, latency: 0.4366us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 6 throughput: 31614037, latency: 0.454847us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 7 throughput: 31468974, latency: 0.511178us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 8 throughput: 16581193, latency: 0.700938us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 9 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 10 throughput: 26474587, latency: 1.40983us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 11 throughput: 32501950, latency: 0.416237us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 12 throughput: 32378443, latency: 0.44445us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 13 throughput: 32286272, latency: 0.445591us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 14 throughput: 32169223, latency: 0.421202us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 15 throughput: 32142758, latency: 0.447917us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 16 throughput: 32066946, latency: 0.449078us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 17 throughput: 31787805, latency: 0.453243us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 18 throughput: 30820609, latency: 0.522452us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 19 throughput: 30785394, latency: 0.46803us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 20 throughput: 30727208, latency: 0.496455us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 21 throughput: 30699199, latency: 0.441903us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 22 throughput: 30025502, latency: 0.482522us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 23 throughput: 421434, latency: 4.52123us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 24 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 25 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 26 throughput: 27818913, latency: 2.2162us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 27 throughput: 31769131, latency: 0.42735us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 28 throughput: 31697368, latency: 0.428456us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 29 throughput: 31696922, latency: 0.48232us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 30 throughput: 31668873, latency: 0.428897us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 31 throughput: 31642880, latency: 0.509518us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 32 throughput: 31491671, latency: 0.485031us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 33 throughput: 30862955, latency: 0.439963us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 34 throughput: 30505369, latency: 0.472861us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 35 throughput: 30473089, latency: 0.529811us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 36 throughput: 30440653, latency: 0.446us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 37 throughput: 30465570, latency: 0.445668us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 38 throughput: 30434963, latency: 0.474032us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 39 throughput: 30472881, latency: 0.500054us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 40 throughput: 30480714, latency: 0.473822us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 41 throughput: 30431035, latency: 0.474116us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 42 throughput: 30088938, latency: 0.45259us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 43 throughput: 20642808, latency: 0.472612us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 44 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 45 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 46 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 47 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 48 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 49 throughput: 6821633, latency: 14.6753us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 50 throughput: 30458373, latency: 0.445693us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 51 throughput: 30361308, latency: 0.44729us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 52 throughput: 30337974, latency: 0.447651us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 53 throughput: 30344762, latency: 0.447512us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 54 throughput: 30344687, latency: 0.447581us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 55 throughput: 30451701, latency: 0.473639us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 56 throughput: 30440695, latency: 0.529459us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 57 throughput: 30432674, latency: 0.446087us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 58 throughput: 30410557, latency: 0.446517us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 59 throughput: 30421330, latency: 0.502467us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 60 throughput: 30418490, latency: 0.502091us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 61 throughput: 30420067, latency: 0.446373us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 62 throughput: 30411359, latency: 0.502692us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 63 throughput: 30389727, latency: 0.503545us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 64 throughput: 30420592, latency: 0.446348us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 65 throughput: 30398189, latency: 0.50303us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 66 throughput: 30421680, latency: 0.502091us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 67 throughput: 30442322, latency: 0.445952us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 68 throughput: 29689473, latency: 0.48852us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 69 throughput: 29149054, latency: 0.470189us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 70 throughput: 11154342, latency: 0.630554us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 71 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 72 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 73 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 74 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 75 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 76 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 77 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 78 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 79 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 80 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 81 throughput: 0, latency: 0us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 82 throughput: 25241708, latency: 7.41932us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 83 throughput: 29400423, latency: 0.896208us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 84 throughput: 30417272, latency: 0.44657us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 85 throughput: 30399290, latency: 0.446827us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 86 throughput: 30425213, latency: 0.446392us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 87 throughput: 30417037, latency: 0.503533us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 88 throughput: 30410901, latency: 0.532215us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 89 throughput: 30417277, latency: 0.501016us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 90 throughput: 30405045, latency: 0.44669us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 91 throughput: 30378370, latency: 0.503652us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 92 throughput: 30388500, latency: 0.447028us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 93 throughput: 30433942, latency: 0.446291us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 94 throughput: 30473844, latency: 0.445711us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 95 throughput: 30454393, latency: 0.473814us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 96 throughput: 30461972, latency: 0.50212us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 97 throughput: 30546358, latency: 0.472189us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 98 throughput: 30485158, latency: 0.445538us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 99 throughput: 30522204, latency: 0.444897us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 100 throughput: 30518016, latency: 0.44495us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 101 throughput: 30490863, latency: 0.47375us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 102 throughput: 30503038, latency: 0.527882us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 103 throughput: 30501614, latency: 0.445178us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 104 throughput: 30485557, latency: 0.473303us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 105 throughput: 30486521, latency: 0.50103us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 106 throughput: 30482710, latency: 0.47392us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 107 throughput: 30482675, latency: 0.501078us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 108 throughput: 30484763, latency: 0.445532us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 109 throughput: 30505111, latency: 0.44518us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 110 throughput: 30495098, latency: 0.473122us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 111 throughput: 30475776, latency: 0.445604us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 112 throughput: 30560254, latency: 0.472259us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 113 throughput: 30605639, latency: 0.472377us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 114 throughput: 30568056, latency: 0.473044us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 115 throughput: 30646195, latency: 0.471752us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 116 throughput: 29886067, latency: 0.514946us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 117 throughput: 29307755, latency: 0.468951us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 118 throughput: 29347346, latency: 0.497398us
+[0m[39m[client_numa.cc:159] [micro] >>> sec 119 throughput: 28919060, latency: 0.475812us
+[0m[39m[client_numa.cc:174] [micro] Throughput(op/s): 24957317
+[0m[39m[client_numa.cc:230] [summary] Mean Throughput(MOPs): 24.957311
+[0m[39m[client_numa.cc:232] [summary] Max Throughput(MOPs): 39.837972
+[0m[39m[client_numa.cc:234] [summary] Min Throughput(MOPs): 0.000000
+[0m[39m[client_numa.cc:236] [summary] Mean Latency(us): 0.38615826
+[0m[39m[client_numa.cc:238] [summary] Tail Latency P95(us): 0.90000000
+[0m[39m[client_numa.cc:240] [summary] Tail Latency P99(us): 1.10000000
+[0m[39m[client_numa.cc:242] [summary] Tail Latency P999(us): 1.50000000
+[0m[39m[client_numa.cc:244] [summary] Percentile Samples N: 2994878134, ranks(p95/p99/p999): 2845134228/2964929353/2991883256
+[0m
