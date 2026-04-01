@@ -158,7 +158,7 @@ run_resize_trial() {
     echo "========================================================================"
 
     # ── Clean up stale shared-memory artefacts ─────────────────────────────
-    rm -f /dev/shm/outback_numa_*
+    sudo rm -f /dev/shm/outback_numa_*
 
     # ── Start server ────────────────────────────────────────────────────────
     echo "[$(date +%T)] Starting server on core ${SERVER_CPU}, NUMA mem node ${SERVER_MEM} ..."
@@ -247,17 +247,21 @@ run_resize_trial() {
     RESIZE_TRIGGER_S="n/a"
     NORMAL_RECOVERY_S="n/a"
     if [[ -s "${EVENTS_TXT}" ]]; then
-        # Server boot timestamp (first line containing ts_ms in SERVER_LOG)
-        BOOT_MS=$(grep 'ts_ms=' "${SERVER_LOG}" | head -1 | grep -oP 'ts_ms=\K[0-9]+' || echo "0")
-        # PRE_RESIZE timestamp
-        PRE_MS=$(grep 'state -> PRE_RESIZE' "${SERVER_LOG}" | head -1 | grep -oP 'ts_ms=\K[0-9]+' || echo "0")
-        # Final NORMAL timestamp (after GC)
+        # Timestamps from [resize] state lines
+        # First PRE_RESIZE = when orchestrator began watching (serves as t=0 reference)
+        FIRST_PRE_MS=$(grep 'state -> PRE_RESIZE' "${SERVER_LOG}" | head -1 | grep -oP 'ts_ms=\K[0-9]+' || echo "0")
+        # Second PRE_RESIZE = actual resize trigger (first is the initial PRE_RESIZE at startup)
+        SECOND_PRE_MS=$(grep 'state -> PRE_RESIZE' "${SERVER_LOG}" | sed -n '2p' | grep -oP 'ts_ms=\K[0-9]+' || echo "0")
+        # Final NORMAL timestamp (after GC of the last resize cycle)
         NORM_MS=$(grep 'state -> NORMAL' "${SERVER_LOG}" | tail -1 | grep -oP 'ts_ms=\K[0-9]+' || echo "0")
-        if [[ "$BOOT_MS" -gt 0 && "$PRE_MS" -gt 0 ]]; then
-            # Subtract warmup period to get seconds-into-benchmark
-            WARMUP_END_MS=$(grep 'resize orchestrator started' "${SERVER_LOG}" | \
-                grep -oP 'ts_ms=\K[0-9]+' 2>/dev/null | head -1 || echo "$BOOT_MS")
-            RESIZE_TRIGGER_S=$(( (PRE_MS  - WARMUP_END_MS) / 1000 ))
+        if [[ "$FIRST_PRE_MS" -gt 0 ]]; then
+            # t=0 is when the orchestrator first entered PRE_RESIZE (benchmark start)
+            WARMUP_END_MS="$FIRST_PRE_MS"
+            if [[ "$SECOND_PRE_MS" -gt 0 ]]; then
+                RESIZE_TRIGGER_S=$(( (SECOND_PRE_MS - WARMUP_END_MS) / 1000 ))
+            else
+                RESIZE_TRIGGER_S=0
+            fi
             [[ "$NORM_MS" -gt 0 ]] && \
                 NORMAL_RECOVERY_S=$(( (NORM_MS - WARMUP_END_MS) / 1000 ))
         fi
