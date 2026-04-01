@@ -8,7 +8,6 @@
 
 #include "outback/trait_numa.hpp"
 
-using namespace test;
 using namespace xstore::transport;
 using namespace xstore::numa;
 using namespace outback;
@@ -17,6 +16,7 @@ using namespace outback;
 volatile bool running = true;
 std::atomic<size_t> ready_threads(0);
 std::mutex* mutexArray;
+volatile uint8_t* lockArray = nullptr;
 
 /*****  LUDO BUCKETS AND UNDERLYING DATA (ON NUMA NODE) *****/
 lru_cache_t* lru_cache;
@@ -126,7 +126,7 @@ void outback_put_direct(const size_t loc, const KeyType& key, const ValType& val
             // Bucket is full - need to update seed or handle overflow
             // For now, cache it
             if (lru_cache) {
-                lru_cache->put(key, val);
+                lru_cache->insert(key, val);
                 ludo_buckets->set_cachebit(row, slot);
             }
             reply->status = true;
