@@ -184,9 +184,9 @@ run_resize_trial() {
         waited=$(( waited + 2 ))
 
         # Bail only if the server process truly vanished
-        if ! kill -0 "${SERVER_PID}" 2>/dev/null; then
+        if ! pgrep -f 'server_numa' > /dev/null 2>&1; then
             echo "ERROR: server exited prematurely after ${waited} s.  Check ${SERVER_LOG}"
-            cat "${SERVER_LOG}" | tail -20
+            tail -20 "${SERVER_LOG}"
             return 1
         fi
 
@@ -222,10 +222,10 @@ run_resize_trial() {
 
     # ── Graceful server shutdown ────────────────────────────────────────────
     echo "[$(date +%T)] Client done (exit=${CLIENT_EXIT}).  Shutting down server ..."
-    sudo kill -INT "${SERVER_PID}" 2>/dev/null || true
+    sudo pkill -INT -f 'server_numa' 2>/dev/null || true
     sleep "${SERVER_SHUTDOWN_WAIT}"
     # Force-kill if still alive
-    sudo kill -KILL "${SERVER_PID}" 2>/dev/null || true
+    sudo pkill -KILL -f 'server_numa' 2>/dev/null || true
     wait "${SERVER_PID}" 2>/dev/null || true
 
     # ── Parse results ───────────────────────────────────────────────────────
