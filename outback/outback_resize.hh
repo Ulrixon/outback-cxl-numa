@@ -23,6 +23,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <cinttypes>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <mutex>
@@ -641,6 +643,17 @@ private:
 
         reg_->resize_state.store(static_cast<uint32_t>(s), std::memory_order_release);
         reg_->generation.fetch_add(1, std::memory_order_release);
+
+        static const char* state_names[] = {
+            "NORMAL", "PRE_RESIZE", "COPYING",
+            "READY_TO_SWITCH", "DRAIN_OLD", "GC_PENDING"
+        };
+        const char* name = (static_cast<uint32_t>(s) < 6)
+            ? state_names[static_cast<uint32_t>(s)] : "UNKNOWN";
+        // Print to stderr with a tag the shell script can grep for timing.
+        fprintf(stderr, "[resize] state -> %s  ts_ms=%" PRIu64 "\n",
+                name, now_ms());
+        fflush(stderr);
     }
 
     bool memory_pressure_ok(size_t current_region_size) const {

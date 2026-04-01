@@ -22,6 +22,8 @@ using namespace outback;
 using XThread = ::r2::Thread<usize>;
 
 DEFINE_int32(numa_node, 1, "NUMA node to allocate server memory");
+DEFINE_double(s_slow_pct, 0.80, "Fraction of packed_entries that triggers PRE_RESIZE (0.0-1.0)");
+DEFINE_double(s_stop_pct, 0.95, "Fraction of packed_entries that triggers hard COPYING (0.0-1.0)");
 
 #define DEBUG_MODE_CHECK 0
 
@@ -237,9 +239,11 @@ auto setup_ludo_table() -> bool {
     ep1.published.store(1,           std::memory_order_release);
     ep1.cleanup_allowed.store(0,     std::memory_order_relaxed);
 
-    // Configure resize thresholds (80 % and 95 % of packed_entries)
-    shared_meta->s_slow = static_cast<uint64_t>(packed_entries * 0.80);
-    shared_meta->s_stop = static_cast<uint64_t>(packed_entries * 0.95);
+    // Configure resize thresholds from flags (clamped to sane range)
+    const double slow_pct = std::max(0.10, std::min(0.99, FLAGS_s_slow_pct));
+    const double stop_pct = std::max(slow_pct + 0.01, std::min(1.00, FLAGS_s_stop_pct));
+    shared_meta->s_slow = static_cast<uint64_t>(packed_entries * slow_pct);
+    shared_meta->s_stop = static_cast<uint64_t>(packed_entries * stop_pct);
 
     const size_t effective_mem_threads = std::max<size_t>(1, std::min<size_t>(bench::FLAGS_mem_threads, kMaxNumaLanes));
     shared_meta->mem_threads = static_cast<uint32_t>(effective_mem_threads);
