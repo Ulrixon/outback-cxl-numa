@@ -5,7 +5,7 @@ EXP_SECONDS=120
 SERVER_SECONDS=500
 BENCH_NKEYS=10000000
 COROS=2
-OUTPUT_FILE="dataset_experiment_results.csv"
+OUTPUT_FILE="results/dataset_experiment_results.csv"
 
 # Write CSV header if the file doesn't exist
 if [ ! -f "$OUTPUT_FILE" ]; then

@@ -17,7 +17,7 @@ set -euo pipefail
 
 BUILD_DIR="${BUILD_DIR:-./build}"
 CLIENT_BIN="${BUILD_DIR}/benchs/outback/client_numa"
-RESULTS_DIR="./memory_results"
+RESULTS_DIR="./results/memory_results"
 OUTPUT_CSV="${RESULTS_DIR}/compute_node_memory.csv"
 
 LOAD_FACTORS=(0.80 0.85 0.90 0.95)

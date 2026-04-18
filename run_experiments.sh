@@ -8,7 +8,7 @@ NKEYS=50000000
 BENCH_NKEYS=10000000
 MEM_THREADS=1
 COROS=2
-OUTPUT_FILE="experiment_results.csv"
+OUTPUT_FILE="results/experiment_results.csv"
 
 # Write CSV header if the file doesn't exist
 if [ ! -f "$OUTPUT_FILE" ]; then

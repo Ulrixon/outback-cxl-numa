@@ -8,7 +8,9 @@ This repository contains:
 2. **CXL/NUMA extension** that replaces RDMA with cross-socket NUMA loads/stores (emulating CXL.mem)
 3. **Experiment scripts** to reproduce all figures from the report
 
-> **Report & Slides:** See `Final_Report.tex` and `Slides.tex` in this repository.
+> **Report & Slides:** See [`docs/Final_Report.tex`](docs/Final_Report.tex) and [`docs/Slides.tex`](docs/Slides.tex).
+>
+> **For contributors / future maintainers:** Read the [`memory-bank/`](memory-bank/) folder before making changes. It contains the authoritative project state, hardware specs, experiment data schemas, build recipes, and a log of past mistakes.
 
 ---
 
@@ -46,15 +48,17 @@ cd outback-cxl-numa
 
 | | **Paper (r650)** | **RDMA Repro (r320)** | **CXL/NUMA (c6420)** |
 |---|---|---|---|
-| NIC | CX-6 100 Gbps | CX-3 10 Gbps | N/A (load/store) |
-| CPU | Gold 6338N 32C | E5-2450 8C | 2× Gold 6142 16C |
-| Memory | 256 GB | 16 GB | 384 GB |
+| NIC | CX-6 100 Gbps | CX-3 MX354A 56 Gbps FDR | N/A (load/store) |
+| CPU | Gold 6338N 32C | E5-2450 8C/16T | 2× Gold 6142 16C |
+| Memory | 256 GB | 16 GB DDR3-1600 | 384 GB DDR4 |
 | Nodes | Up to 9 | 3 (1 MN + 2 CN) | 1 (2 NUMA sockets) |
-| Interconnect | PCIe/RDMA | 10G RoCE | UPI ~150 ns |
+| Interconnect | PCIe/RDMA | 56 Gbps FDR InfiniBand | UPI ~150 ns |
 
 To instantiate on CloudLab:
-- **RDMA (r320):** Create a 3-node experiment with `r320` profile. Each node has a Mellanox CX-3 FDR adapter.
+- **RDMA (r320):** Create a 3-node experiment with `r320` profile. Each node has a Mellanox MX354A ConnectX-3 dual-port FDR adapter on the Apt 56 Gbps fabric.
 - **CXL/NUMA (c6420):** Create a single `c6420` node. Verify 2 NUMA nodes with `numactl --hardware`.
+
+> Authoritative specs and the rationale for these numbers live in [`memory-bank/03-hardware-and-platforms.md`](memory-bank/03-hardware-and-platforms.md).
 
 ---
 
@@ -112,8 +116,8 @@ Repeat with `--workloads=ycsba`, `ycsbb`, `ycsbd` for all workloads.
 ### 4. Automated sweep
 
 ```bash
-./run_experiments.sh          # YCSB throughput sweep → experiment_results.csv
-./run_experiments_datasets.sh # FB/OSM dataset sweep  → dataset_experiment_results.csv
+./run_experiments.sh          # YCSB throughput sweep → results/experiment_results.csv
+./run_experiments_datasets.sh # FB/OSM dataset sweep  → results/dataset_experiment_results.csv
 ```
 
 ---
@@ -164,7 +168,7 @@ Repeat with `--workloads=ycsba`, `ycsbb`, `ycsbd`.
 ### 3. Automated sweep
 
 ```bash
-./run_experiments.sh   # also supports NUMA mode — outputs experiment_results.csv
+./run_experiments.sh   # also supports NUMA mode — outputs results/experiment_results.csv
 ```
 
 ### Parameters
@@ -188,7 +192,7 @@ Measures compute-node DMPH index size across load factors and key counts. No ser
 
 ```bash
 ./run_memory_experiment.sh
-# Output: memory_results/compute_node_memory.csv
+# Output: results/memory_results/compute_node_memory.csv
 ```
 
 Sweeps:
@@ -205,7 +209,7 @@ Measures throughput time series during hash table resizing under YCSB-D (5% inse
 
 ```bash
 ./run_resize_experiment.sh
-# Output: resize_results/
+# Output: results/resize_results/
 #   resize_timeseries_t{8,12,16}.csv   — per-second throughput
 #   resize_events_t{8,12,16}.txt       — server-side resize state transitions
 #   resize_summary.csv                 — min/mean/max per run
@@ -271,14 +275,29 @@ Machine 1 (CN)                       Machine 2 (MN)
 |------|-------------|
 | `outback/` | Core Outback implementation (client, server, DMPH, resize) |
 | `outback/*_numa.hh` | CXL/NUMA-specific variants |
-| `benchs/outback/` | Benchmark drivers (client.cc, server.cc, *_numa.cc) |
+| `benchs/outback/` | Benchmark drivers (`client.cc`, `server.cc`, `*_numa.cc`) |
 | `deps/ludo/` | Ludo Cuckoo Hash + Othello (the DMPH engine) |
 | `run_experiments.sh` | YCSB throughput sweep |
 | `run_experiments_datasets.sh` | FB/OSM dataset experiments |
 | `run_resize_experiment.sh` | Resize time-series experiment (Fig. 17) |
 | `run_memory_experiment.sh` | DMPH memory usage experiment (Fig. 16) |
-| `Final_Report.tex` | Full LaTeX report (IEEE format) |
-| `Slides.tex` | Beamer presentation slides |
+| `docs/` | LaTeX report + slides + reference PDFs + figures |
+| `docs/Final_Report.tex` | Full LaTeX report (IEEE format) |
+| `docs/Slides.tex` | Beamer presentation slides |
+| `results/` | All experiment output CSVs and resize logs |
+| `memory-bank/` | Project memory for AI assistants and contributors |
+
+## Further documentation
+
+Detailed design / setup / migration documents have been consolidated under [`memory-bank/`](memory-bank/):
+
+- [`memory-bank/03-hardware-and-platforms.md`](memory-bank/03-hardware-and-platforms.md) — authoritative hardware specs
+- [`memory-bank/05-build-and-run.md`](memory-bank/05-build-and-run.md) — build recipes including LaTeX
+- [`memory-bank/08-numa-architecture.md`](memory-bank/08-numa-architecture.md) — NUMA implementation architecture (formerly `README_NUMA.md`)
+- [`memory-bank/09-numa-migration-details.md`](memory-bank/09-numa-migration-details.md) — RDMA→NUMA code-level migration notes
+- [`memory-bank/10-numa-resizing-plan.md`](memory-bank/10-numa-resizing-plan.md) — design plan for dynamic resizing in NUMA mode
+- [`memory-bank/11-numa-migration-summary.md`](memory-bank/11-numa-migration-summary.md) — chronological migration log
+- [`memory-bank/12-setup-guide.md`](memory-bank/12-setup-guide.md) — extended setup walkthrough (formerly `SETUP_GUIDE.md`)
 
 ---
 

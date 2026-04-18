@@ -32,7 +32,7 @@ set -euo pipefail
 # ────────────────────────────────────────────────────────────────────────────
 
 BUILD_DIR="./build"                # CMake build output directory
-RESULTS_DIR="./resize_results"     # Where all output files go
+RESULTS_DIR="./results/resize_results"     # Where all output files go
 NKEYS=20000000                     # 20 M bulk-load keys (matches paper)
 BENCH_NKEYS=20000000               # ops pool size; large enough for 120 s
 NON_NKEYS=2000000                  # 2 M new-key pool for YCSB-D inserts
