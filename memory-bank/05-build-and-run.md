@@ -41,7 +41,7 @@ pdflatex -interaction=nonstopmode -halt-on-error Slides.tex
 
 Expected outputs:
 - `docs/Final_Report.pdf` — 18 pages
-- `docs/Slides.pdf` — 27 pages
+- `docs/Slides.pdf` — 24 pages
 
 `latexmk` is **not installed** in this WSL environment; use the two-pass
 `pdflatex` recipe above.

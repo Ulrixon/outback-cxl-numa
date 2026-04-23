@@ -34,8 +34,12 @@ frame. Renamed to `stepbox/.style=`. Avoid built-in TikZ key names
 ## Pitfall 4: Cross-platform throughput comparison
 
 Do **not** directly compare absolute MOPS between:
-- Paper Fig.9 (Intel `r650` / CX-6 100 Gbps / 9 nodes / 4 MN threads → 17 MOPS)
-- Our reproduction (r320 / CX-3 56 Gbps FDR / 3 nodes / 1 MN thread → 4.5 MOPS)
+- Paper Fig.9 (Intel `r650` / CX-6 100 Gbps / 6 nodes total,
+  2 shards x (1 MN + 2 CN), 1 MNT/shard)
+- Paper Fig.10 (r320 / CX-3 56 Gbps FDR / 9 nodes total,
+  1 MN + 8 CN, 4 MN threads on one MN node)
+- Our reproduction (r320 / CX-3 56 Gbps FDR / 3 nodes,
+  1 MN + 2 CN, 1 MN thread)
 
 Always normalize to **per-MN-thread throughput** before comparing. Same
 goes for the CXL/NUMA results (single-node, no NIC → ~118 MOPS @ 32 T).
@@ -66,3 +70,18 @@ the report.
 After the April 2026 reorg, the four `run_*.sh` scripts write into
 `results/`. If you re-introduce a script that writes a CSV at the repo
 root, it will be missed by anyone looking under `results/`.
+
+## Pitfall 9: "4MN" wording is ambiguous and usually wrong
+
+For paper Fig.10, use "4 MNT" or "4 MN threads on one MN node".
+Do not write "4MN" unless you explicitly mean 4 separate MN nodes.
+
+## Pitfall 10: Do not silently merge 1CN and 2CN curves
+
+When plotting RDMA reproduction against paper Fig.9/Fig.10, keep 1CN and 2CN
+as separate curves unless explicitly asked to merge them.
+
+Recommended visual convention:
+- filled markers = 1CN
+- hollow markers = 2CN
+- same color = same workload

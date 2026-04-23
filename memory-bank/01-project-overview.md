@@ -32,8 +32,8 @@ store (DMPH-indexed RDMA KV) originally evaluated in the Outback paper
 ## Scope guardrails
 
 - We do **not** claim to match the paper's absolute aggregate throughput
-  (paper: 9 nodes / 4 MN threads → 17 MOPS; we: 3 nodes / 1 MN thread).
-  Comparisons must always be normalized **per MN thread**.
+   (paper Fig.10: 9 nodes / 4 MN threads → 17 MOPS; we: 3 nodes / 1 MN thread).
+   Comparisons must always be normalized **per MN thread**.
 - The CXL extension is an **emulation** via NUMA, not real CXL.mem.
 - The reproduction hardware is the same `r320` class as the paper's Figure 10
   cluster, so same-hardware-class comparisons against Fig.10 are valid;

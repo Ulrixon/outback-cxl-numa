@@ -48,9 +48,20 @@ In CXL/NUMA emulation, remote memory access resolves in ~100-300 nanoseconds. Sw
 ### Before: Hardware Queue Pairs
 To prevent massive bottlenecks when multiple clients hit the server at once, RDMA utilizes hardware Queue Pairs (QPs) directly on the NIC to multiplex the traffic.
 
-### After: Virtual Software Lanes
-Without a NIC, all concurrent `__sync_fetch_and_add` scaling requests from 24+ clients hammer the exact same memory address on the server, causing severe CPU cache-line bouncing (contention).
-*   **Mechanism:** To mimic hardware QPs, we built a partitioned allocator within the `SharedNumaRegistry`. Setting `--mem_threads=16` allocates 16 independent atomic counters (`lane_next_free_index[16]`) inside the shared memory. Client threads modulo against this array (`thread_id % mem_threads`) to guarantee parallel, lock-free insertions across the NUMA nodes.
+### After: Virtual Insert Lanes (not MN worker threads)
+In NUMA mode there is no separate MN CPU process. The "MN" is NUMA1 DRAM,
+and CN threads on NUMA0 issue direct load/store operations over UPI.
+
+Without a NIC, concurrent insertions can contend on one allocator counter.
+*   **Mechanism:** `--mem_threads=N` shards allocation across `N` independent
+    atomic counters (`lane_next_free_index[N]`) in shared memory. Each client
+    thread maps to one lane (`thread_id % mem_threads`), reducing CAS
+    contention in insert paths.
+*   **Interpretation rule:** In NUMA plots/tables, `mem_threads` does **not**
+    mean "MN has N worker threads". It means "allocator has N insert lanes".
+*   **Observed impact:** Reads are unaffected (lookup path never touches
+    `lane_next_free_index`). Write-heavy workloads show only small gains in
+    this setup because UPI memory traffic is the dominant bottleneck.
 
 ---
 

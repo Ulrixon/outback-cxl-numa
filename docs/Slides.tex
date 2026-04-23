@@ -117,59 +117,6 @@ $\Rightarrow$ 3--5 RDMA hops per GET
 \end{frame}
 
 % ──────────────────────────────────────────────────────────────────────────────
-\begin{frame}{DMPH Lookup: How One-Hop Works}
-\centering
-\begin{tikzpicture}[
-  stepbox/.style={draw, rounded corners=3pt, minimum height=0.5cm,
-               font=\scriptsize, inner sep=3pt, text width=4.8cm, align=left},
-  lbl/.style={font=\scriptsize\bfseries, anchor=east},
-  arr/.style={-{Stealth[length=3pt]}, thick, gray!70},
-  node distance=0.22cm,
-]
-  % CN steps
-  \node[stepbox, fill=rdmacolor!10] (s1)
-        {\texttt{h(key)} $\to$ 2 candidate buckets};
-  \node[lbl, left=3pt of s1] {CN};
-  \node[stepbox, fill=rdmacolor!10, below=of s1] (s2)
-        {Othello XOR $\to$ pick correct bucket};
-  \node[stepbox, fill=rdmacolor!10, below=of s2] (s3)
-        {Seed + hash $\to$ exact slot (0--3)};
-  \node[stepbox, fill=rdmacolor!10, below=of s3] (s4)
-        {Result: \texttt{(bucket, slot)} = location};
-
-  % Network
-  \node[stepbox, fill=yellow!15, below=0.35cm of s4, text width=4.8cm, align=center] (net)
-        {\textbf{Single RPC:} \texttt{(bucket, slot, key)}};
-
-  % MN steps
-  \node[stepbox, fill=numacolor!10, below=0.35cm of net] (m1)
-        {\texttt{addr = Buckets[bkt][slot].addr}};
-  \node[lbl, left=3pt of m1] {MN};
-  \node[stepbox, fill=numacolor!10, below=of m1] (m2)
-        {\texttt{val = PackedData[addr]} $\to$ reply};
-
-  % Arrows
-  \foreach \a/\b in {s1/s2, s2/s3, s3/s4, s4/net, net/m1, m1/m2}
-    \draw[arr] (\a) -- (\b);
-
-  % Annotation
-  \node[right=0.6cm of s2, font=\tiny, text width=4cm, align=left,
-        fill=white, draw=gray!40, rounded corners=2pt, inner sep=3pt] (ann)
-    {\textbf{All local} (ns-scale):\\[1pt]
-     Othello: \texttt{A[h$_1$(k)] $\oplus$ B[h$_2$(k)]}\\
-     Seed $\to$ slot: top 2 bits of \texttt{hash(s,k)}\\[2pt]
-     \textbf{No keys/values on CN}\\
-     $\Rightarrow$ $\sim$12.5\,MB for 20M keys (paper)};  
-  \draw[gray!40, thick, dashed] (s2.east) -- (ann.west);
-
-\end{tikzpicture}
-
-\vspace{4pt}
-\small
-\textbf{vs.\ baselines:} RACE needs 2--3 hops (hash chain); tree indices need $O(\log n)$ traversals
-\end{frame}
-
-% ──────────────────────────────────────────────────────────────────────────────
 \begin{frame}{Project Goals}
 \begin{enumerate}
   \item \textbf{Reproduce} the original Outback RDMA experiments on CloudLab CX-3 nodes\\
@@ -192,26 +139,37 @@ No dedicated CXL hardware available. Cross-socket NUMA loads/stores via UPI ($\s
 \section{Environment Setup}
 % ══════════════════════════════════════════════════════════════════════════════
 
-\begin{frame}{Three Platforms Compared}
+\begin{frame}{Four Platforms Compared}
 \centering
-\small
-\begin{tabular}{@{}lccc@{}}
+\scriptsize
+\begin{tabular}{@{}lcccc@{}}
 \toprule
- & \textbf{Paper (r650)} & \textbf{RDMA Repro (ours)} & \textbf{CXL/NUMA (c6420)} \\
+ & \textbf{Paper Fig.~9} & \textbf{Paper Fig.~10} & \textbf{RDMA Repro} & \textbf{CXL/NUMA} \\
+ & \textbf{(r650)} & \textbf{(r320)} & \textbf{(r320, ours)} & \textbf{(c6420)} \\
 \midrule
-NIC & CX-6, 100\,Gbps & CX-3, 56\,Gbps FDR & N/A (load/store) \\
-CPU & Gold 6338N, 32C & E5-2450, 8C/16T & 2$\times$Gold 6142, 16C \\
-Memory & 256\,GB & 64\,GB & 384\,GB \\
-Nodes & Up to 9 & 3 & 1 \\
-Max Threads & 144/shard & 32 (2 CN) & 32 (1 socket) \\
-Interconnect & PCIe/RDMA & 56\,Gbps FDR IB & UPI $\sim$150\,ns \\
+NIC & CX-6, 100\,Gbps & CX-3, 56\,Gbps FDR & CX-3, 56\,Gbps FDR & N/A (load/store) \\
+CPU & 2$\times$Plat.~8360Y, 36C & E5-2450, 8C/16T & E5-2450, 8C/16T & 2$\times$Gold 6142, 16C \\
+Memory & 256\,GB & 16\,GB & 16\,GB & 384\,GB \\
+Topology & 2 shards: 1\,MN+2\,CN/shard & 1\,MN + 8\,CN & 1\,MN + 2\,CN & 1 node (NUMA) \\
+MN Threads & 1/shard (Fig.~9) & 4 & 1--3 & N/A\,$^\dagger$ \\
+Max CN Threads & 144/shard & 64 (8/node) & 32 (16/node) & 32 (1 socket) \\
+Interconnect & 100\,Gbps IB & 56\,Gbps FDR IB & 56\,Gbps FDR IB & UPI $\sim$150\,ns \\
 \bottomrule
 \end{tabular}
 
-\vspace{8pt}
-\textbf{Expected:}\\
-RDMA reproduction $\approx$ paper per-MN-thread rate\\
-CXL/NUMA \textbf{$\gg$} both (no network stack)
+\vspace{4pt}
+\scriptsize
+$^\dagger$\,CXL/NUMA has \textbf{no MN CPU}: the ``memory node'' is NUMA1 DRAM only.
+CN threads (NUMA0) access it via direct \texttt{load}/\texttt{store}~--- no RPC dispatch, no MN thread.
+\texttt{mem\_threads} is repurposed as \textbf{insert-lane sharding}: each value shards the
+\texttt{lane\_next\_free\_index} atomic counter across $N$ lanes to reduce CAS contention on inserts.
+Zero effect on reads (lookup never touches the counter); negligible on writes
+because the UPI memory bus, not the counter CAS, is the actual bottleneck.
+
+\vspace{2pt}
+\small
+\textbf{Our r320 $\equiv$ paper Fig.~10 hardware.} Difference: 3 nodes vs.\ 9; 1--3 MN threads vs.\ 4.\\
+CXL/NUMA eliminates network entirely $\Rightarrow$ dramatically lower latency.
 \end{frame}
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -241,37 +199,6 @@ $\Rightarrow$ Remove all coroutine logic; direct \texttt{numa\_search()} via poi
 \end{block}
 \end{frame}
 
-% ──────────────────────────────────────────────────────────────────────────────
-\begin{frame}{Resize State Machine}
-\centering
-\begin{tikzpicture}[
-  state/.style={draw, rounded corners, fill=numacolor!15, minimum width=2.2cm, font=\small, align=center},
-  arr/.style={-{Stealth}, thick},
-  node distance=1.4cm and 1.3cm
-]
-  \node[state] (n) {NORMAL};
-  \node[state, right=of n] (pr) {PRE\_\\RESIZE};
-  \node[state, right=of pr] (cp) {COPYING};
-  \node[state, below=of cp] (rs) {READY\_TO\\SWITCH};
-  \node[state, left=of rs] (dr) {DRAIN\_\\OLD};
-  \node[state, left=of dr] (gc) {GC\_\\PENDING};
-
-  \draw[arr] (n) -- (pr);
-  \draw[arr] (pr) -- (cp);
-  \draw[arr] (cp) -- (rs);
-  \draw[arr] (rs) -- (dr);
-  \draw[arr] (dr) -- (gc);
-  \draw[arr] (gc) -- (n);
-\end{tikzpicture}
-
-\vspace{8pt}
-\begin{itemize}
-  \item Each epoch creates a new versioned shared-memory region
-  \item Clients detect changes via generation counter, transparently remap
-  \item Mutations deferred during COPYING/DRAIN, replayed after switch
-\end{itemize}
-\end{frame}
-
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Codebase Issues Discovered}
 % ══════════════════════════════════════════════════════════════════════════════
@@ -284,7 +211,7 @@ $\Rightarrow$ Remove all coroutine logic; direct \texttt{numa\_search()} via poi
   \item \textbf{Broken zipfian for datasets} --- code accepts params but only applies to YCSB\\
         {\small Paper shows zipfian results for FB/OSM (Fig.~11c,d)}
   \medskip
-  \item \textbf{Memory requirements undisclosed} --- 80M keys causes OOM during server bring-up on our 64\,GB nodes (huge-page MR + raw KV + DMPH index exhaust the huge-page pool)\\
+  \item \textbf{Memory requirements undisclosed} --- 80M keys causes OOM during server bring-up on our 16\,GB nodes (huge-page MR + raw KV + DMPH index exhaust the huge-page pool)\\
         {\small Paper tests 80M on r650 (256\,GB)}
   \medskip
   \item \textbf{YCSB-E (range scan) unimplemented}\\
@@ -303,38 +230,58 @@ $\Rightarrow$ Remove all coroutine logic; direct \texttt{numa\_search()} via poi
 
 \begin{frame}{RDMA: YCSB Throughput (Paper Figs.~9--10)}
 \begin{columns}[T]
-\column{0.5\textwidth}
+% ── Left: chart ──────────────────────────────────────────────────────────────
+\column{0.57\textwidth}
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    width=0.95\columnwidth,
-    height=4.5cm,
+    width=\columnwidth,
+    height=4.0cm,
     ylabel={Throughput (MOPS)},
-    xlabel={Threads},
+    ylabel style={font=\small},
+    xlabel={CN Threads},
+    xlabel style={font=\small},
     xmode=log, log basis x=2,
     xtick={1,2,4,8,16,32,64,128},
     xticklabels={1,2,4,8,16,32,64,144},
     x tick label style={rotate=30,anchor=east,font=\tiny},
     xmin=1, xmax=200,
     ymin=0, ymax=20,
-    legend style={at={(0.5,-0.52)},anchor=north,legend columns=5,font=\tiny},
+    % 5-entry workload legend (style legend shown below chart)
+    legend style={at={(0.98,0.98)},anchor=north east,
+            font=\scriptsize,row sep=-1pt,
+            fill=white,fill opacity=1,draw=black!30,text opacity=1},
     every axis plot/.append style={mark size=1.5pt, thick},
     grid=major, grid style={gray!30},
-    title style={font=\small},
-    title={Ours vs.\ Fig.~9 (CX-6) \& Fig.~10 (CX-3 4MN)}
 ]
-% Our data (solid markers)
+% Our data (1CN): filled markers, legend entries here only
 \addplot[color=numacolor,mark=square*]
   coordinates {(1,0.724)(2,1.411)(4,2.770)(8,4.503)(16,4.325)};
+\addlegendentry{C}
 \addplot[color=teal,mark=triangle*]
   coordinates {(1,0.731)(2,1.451)(4,2.836)(8,3.722)(16,4.091)};
+\addlegendentry{B}
 \addplot[color=orange,mark=diamond*]
   coordinates {(1,0.740)(2,1.471)(4,2.746)(8,3.632)(16,3.783)};
+\addlegendentry{A}
 \addplot[color=purple!80,mark=pentagon*]
   coordinates {(1,0.744)(2,1.460)(4,2.699)(8,3.832)(16,3.900)};
+\addlegendentry{D}
 \addplot[color=rdmacolor,mark=star]
   coordinates {(1,0.626)(2,1.194)(4,1.939)(8,2.213)(16,2.370)};
-% Paper Fig.9 (CX-6, 1MN) -- densely dashed
+\addlegendentry{F}
+% Our data (2CN): hollow markers, same colors/shapes as 1CN
+\addplot[color=numacolor,mark=square*,mark options={fill=white}]
+  coordinates {(4,2.802)(8,4.269)(16,4.833)(32,5.040)};
+\addplot[color=teal,mark=triangle*,mark options={fill=white}]
+  coordinates {(4,2.777)(8,4.043)(16,4.461)(32,4.439)};
+\addplot[color=orange,mark=diamond*,mark options={fill=white}]
+  coordinates {(4,2.709)(8,3.649)(16,3.873)(32,4.049)};
+\addplot[color=purple!80,mark=pentagon*,mark options={fill=white}]
+  coordinates {(4,2.720)(8,3.982)(16,4.229)(32,4.281)};
+\addplot[color=rdmacolor,mark=star,mark options={fill=white}]
+  coordinates {(4,1.926)(8,2.157)(16,2.501)(32,2.354)};
+% Paper Fig.9 (CX-6, 1MN) -- densely dashed, no legend entries
 \addplot[color=numacolor,mark=none,densely dashed,thick]
   coordinates {(8,1.0)(12,2.0)(20,3.5)(72,5.7)(108,6.0)(144,6.01)};
 \addplot[color=teal,mark=none,densely dashed,thick]
@@ -345,7 +292,7 @@ $\Rightarrow$ Remove all coroutine logic; direct \texttt{numa\_search()} via poi
   coordinates {(8,3.8)(12,4.5)(20,5.0)(72,5.2)(108,5.3)(144,5.5)};
 \addplot[color=rdmacolor,mark=none,densely dashed,thick]
   coordinates {(8,1.3)(12,2.1)(20,2.8)(72,3.2)(108,3.4)(144,3.62)};
-% Paper Fig.10 (CX-3, 4MN) -- dotted
+% Paper Fig.10 (r320 CX-3, 4MN threads) -- dotted, no legend entries
 \addplot[color=numacolor,mark=none,dotted,thick]
   coordinates {(8,9.0)(16,12.5)(24,14.5)(32,15.5)(48,17.0)(64,17.0)};
 \addplot[color=teal,mark=none,dotted,thick]
@@ -356,19 +303,26 @@ $\Rightarrow$ Remove all coroutine logic; direct \texttt{numa\_search()} via poi
   coordinates {(8,9.0)(16,11.5)(24,13.0)(32,14.5)(48,15.5)(64,16.0)};
 \addplot[color=rdmacolor,mark=none,dotted,thick]
   coordinates {(8,5.0)(16,7.0)(24,8.0)(32,8.5)(48,9.0)(64,9.0)};
-\legend{C\,(ours), B\,(ours), A\,(ours), D\,(ours), F\,(ours),
-        C\,(F9), B\,(F9), A\,(F9), D\,(F9), F\,(F9),
-        C\,(F10), B\,(F10), A\,(F10), D\,(F10), F\,(F10)}
 \end{axis}
 \end{tikzpicture}
 
-\column{0.5\textwidth}
+\vspace{1pt}
+\begin{minipage}{\columnwidth}
 \centering
-\small
+{\scriptsize filled markers\,=\,ours 1\,CN (1--16\,T) \quad
+ hollow markers\,=\,ours 2\,CN (4--32\,T)}\\[-1pt]
+{\scriptsize dashed\,=\,Fig.~9 (6$\times$r650, CX-6, 1\,MNT/shard) \quad
+ dotted\,=\,Fig.~10 (9$\times$r320, CX-3, 1\,MN+8\,CN, 4\,MNT)}
+\end{minipage}
+
+% ── Right: table + finding ────────────────────────────────────────────────────
+\column{0.40\textwidth}
+\centering
+\scriptsize
 \begin{tabular}{@{}lrrl@{}}
 \toprule
 \textbf{WL} & \textbf{Paper} & \textbf{Ours} & \textbf{Ratio} \\
- & \textbf{(CX-6)} & \textbf{(ours)} & \\
+ & \textbf{Fig.~9} & \textbf{(r320)} & \\
 \midrule
 C & 6.01 & 5.04 & 0.84$\times$ \\
 B & 5.82 & 4.44 & 0.76$\times$ \\
@@ -378,11 +332,13 @@ F & 3.62 & 2.35 & 0.65$\times$ \\
 \bottomrule
 \end{tabular}
 
-\vspace{8pt}
+\vspace{6pt}
 \begin{block}{\small Finding}
-65--84\% of CX-6 peaks despite 2$\times$ weaker NIC\\
-        (56\,Gbps FDR vs.\ 100\,Gbps CX-6).\\
-Per-MN-thread rate is consistent.
+\scriptsize
+65--84\% of r650 CX-6 peaks\\
+despite 2$\times$ weaker NIC.\\
+r320 $\equiv$ Fig.~10 hardware;\\
+per-MN-thread rate consistent.
 \end{block}
 \end{columns}
 \end{frame}
@@ -455,100 +411,6 @@ Per-MN-thread rate is consistent.
 \section{CXL/NUMA Results}
 % ══════════════════════════════════════════════════════════════════════════════
 
-\begin{frame}{CXL/NUMA: Near-Perfect Linear Scaling}
-\begin{columns}[T]
-\column{0.52\textwidth}
-\centering
-\begin{tikzpicture}
-\begin{axis}[
-    ybar,
-    width=\columnwidth,
-    height=5.5cm,
-    ylabel={Throughput (MOPS)},
-    xlabel={Threads},
-    symbolic x coords={1,2,4,8,16,32},
-    xtick=data,
-    ymin=0, ymax=140,
-    bar width=8pt,
-    nodes near coords,
-    nodes near coords style={font=\tiny,rotate=45,anchor=south west},
-    title style={font=\small},
-    title={CXL/NUMA YCSB-C}
-]
-\addplot[fill=numacolor!80] coordinates {
-  (1,4.794) (2,9.056) (4,17.833) (8,35.737) (16,70.091) (32,118.270)
-};
-\end{axis}
-\end{tikzpicture}
-
-\column{0.45\textwidth}
-\begin{itemize}
-  \item \textbf{118 MOPS} at 32 threads
-  \item Mean latency: \textbf{0.14\,$\mu$s}\\
-        (vs.\ 3.04\,$\mu$s RDMA)
-  \bigskip
-  \item Near-perfect linear scaling:\\
-        each thread adds $\sim$3.7\,MOPS
-  \bigskip
-  \item No NIC bottleneck:\\
-        throughput $\propto$ thread count
-  \bigskip
-  \item P99 latency: 0.50\,$\mu$s\\
-        P999 latency: 0.70\,$\mu$s
-\end{itemize}
-\end{columns}
-\end{frame}
-
-% ──────────────────────────────────────────────────────────────────────────────
-\begin{frame}{CXL/NUMA: Coroutines Are Irrelevant}
-\begin{columns}[T]
-\column{0.52\textwidth}
-\centering
-\begin{tikzpicture}
-\begin{axis}[
-    width=\columnwidth,
-    height=5.5cm,
-    ylabel={Throughput (MOPS)},
-    xlabel={Threads},
-    xmode=log, log basis x=2,
-    xtick={1,2,4,8,16,32},
-    xticklabels={1,2,4,8,16,32},
-    ymin=0, ymax=140,
-    legend style={at={(0.02,0.98)},anchor=north west,font=\tiny},
-    every axis plot/.append style={mark size=2pt, thick},
-    title style={font=\small},
-    title={CXL/NUMA: Coroutine Effect}
-]
-\addplot[color=numacolor!60,mark=triangle*,dashed]
-  coordinates {(1,4.776)(4,17.734)(8,35.827)(16,70.214)(32,116.106)};
-\addplot[color=numacolor,mark=square*]
-  coordinates {(1,4.794)(4,17.833)(8,35.737)(16,70.091)(32,118.270)};
-\addplot[color=numacolor!40!black,mark=diamond*,dashdotted]
-  coordinates {(1,4.743)(4,17.675)(8,35.399)(16,69.548)(32,121.286)};
-\legend{Coro=1, Coro=2, Coro=3}
-\end{axis}
-\end{tikzpicture}
-
-\column{0.45\textwidth}
-\begin{itemize}
-  \item All three curves \textbf{overlap perfectly}
-  \bigskip
-  \item Latency: 0.13--0.15\,$\mu$s\\
-        regardless of coro count
-  \bigskip
-  \item NUMA latency ($\sim$150\,ns): coroutine\\
-        switch ($\sim$50--100\,ns) not amortized
-  \bigskip
-  \item $\Rightarrow$ No latency to hide\\
-        $\Rightarrow$ Coroutines are pure overhead
-  \bigskip
-  \item \textbf{Contrast:} RDMA needs coro=2\\
-        for 2$\times$ throughput gain
-\end{itemize}
-\end{columns}
-\end{frame}
-
-% ──────────────────────────────────────────────────────────────────────────────
 \begin{frame}{CXL/NUMA: All YCSB Workloads}
 \centering
 \begin{tikzpicture}
@@ -755,24 +617,75 @@ CXL: \textbf{both} higher throughput and lower latency. No throughput--latency t
 \end{frame}
 
 % ──────────────────────────────────────────────────────────────────────────────
-\begin{frame}{Resize Behavior: RDMA (Paper Fig.~17)}
+\begin{frame}{CXL/NUMA: Coroutines Are Irrelevant}
+\begin{columns}[T]
+\column{0.52\textwidth}
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    width=0.85\textwidth,
+    width=\columnwidth,
     height=5.5cm,
     ylabel={Throughput (MOPS)},
-    xlabel={Time (seconds)},
+    xlabel={Threads},
+    xmode=log, log basis x=2,
+    xtick={1,2,4,8,16,32},
+    xticklabels={1,2,4,8,16,32},
+    ymin=0, ymax=140,
+    legend style={at={(0.02,0.98)},anchor=north west,font=\tiny},
+    every axis plot/.append style={mark size=2pt, thick},
+    title style={font=\small},
+    title={CXL/NUMA: Coroutine Effect}
+]
+\addplot[color=numacolor!60,mark=triangle*,dashed]
+  coordinates {(1,4.776)(4,17.734)(8,35.827)(16,70.214)(32,116.106)};
+\addplot[color=numacolor,mark=square*]
+  coordinates {(1,4.794)(4,17.833)(8,35.737)(16,70.091)(32,118.270)};
+\addplot[color=numacolor!40!black,mark=diamond*,dashdotted]
+  coordinates {(1,4.743)(4,17.675)(8,35.399)(16,69.548)(32,121.286)};
+\legend{Coro=1, Coro=2, Coro=3}
+\end{axis}
+\end{tikzpicture}
+
+\column{0.45\textwidth}
+\begin{itemize}
+  \item All three curves \textbf{overlap perfectly}
+  \bigskip
+  \item Latency: 0.13--0.15\,$\mu$s\\
+        regardless of coro count
+  \bigskip
+  \item NUMA latency ($\sim$150\,ns): coroutine\\
+        switch ($\sim$50--100\,ns) not amortized
+  \bigskip
+  \item $\Rightarrow$ No latency to hide\\
+        $\Rightarrow$ Coroutines are pure overhead
+  \bigskip
+  \item \textbf{Contrast:} RDMA needs coro=2\\
+        for 2$\times$ throughput gain
+\end{itemize}
+\end{columns}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Resize Behavior: RDMA \& CXL/NUMA}
+\begin{columns}[T]
+\column{0.50\textwidth}
+\centering
+{\small\textbf{RDMA (CX-3, 20M keys, YCSB-D)}}\\[2pt]
+\begin{tikzpicture}
+\begin{axis}[
+    width=\columnwidth,
+    height=4.2cm,
+    ylabel={Throughput (MOPS)},
+    xlabel={Time (s)},
     ymin=0, ymax=4.8,
     xmin=0, xmax=47,
     grid=major, grid style={gray!20},
-    title style={font=\small},
-    title={RDMA Resize Time Series (20M keys, YCSB-D)},
     legend style={at={(0.98,0.98)},anchor=north east,font=\tiny,legend columns=2},
-    tick label style={font=\scriptsize},
+    tick label style={font=\tiny},
+    ylabel style={font=\scriptsize},
+    xlabel style={font=\scriptsize},
 ]
-% Thread 4
-\addplot[color=rdmacolor!50,mark=none,thick,dashed] coordinates {
+\addplot[color=rdmacolor!50,mark=none,dashed] coordinates {
   (0,1.394)(1,1.396)(2,1.389)(3,1.384)(4,1.386)(5,1.377)
   (6,1.378)(7,1.371)(8,1.372)(9,1.367)(10,0.990)(11,0.752)
   (12,0.761)(13,1.480)(14,1.537)(15,1.540)(16,1.381)(17,1.364)
@@ -783,7 +696,6 @@ CXL: \textbf{both} higher throughput and lower latency. No throughput--latency t
   (42,1.545)(43,1.453)(44,1.316)(45,1.321)(46,1.320)(47,1.321)
 };
 \addlegendentry{4T}
-% Thread 8
 \addplot[color=rdmacolor,mark=none,thick] coordinates {
   (0,2.352)(1,2.400)(2,2.366)(3,2.367)(4,2.337)(5,2.333)
   (6,1.551)(7,1.449)(8,1.767)(9,2.957)(10,2.953)(11,2.952)
@@ -794,7 +706,6 @@ CXL: \textbf{both} higher throughput and lower latency. No throughput--latency t
   (33,2.447)(34,2.209)(35,2.200)
 };
 \addlegendentry{8T}
-% Thread 12
 \addplot[color=rdmacolor!60!black,mark=none,thick,dashdotted] coordinates {
   (0,2.892)(1,2.817)(2,2.773)(3,2.745)(4,2.732)
   (5,1.911)(6,1.796)(7,2.129)(8,3.702)(9,3.687)(10,3.710)
@@ -805,7 +716,6 @@ CXL: \textbf{both} higher throughput and lower latency. No throughput--latency t
   (31,2.836)(32,2.503)
 };
 \addlegendentry{12T}
-% Thread 16
 \addplot[color=rdmacolor!30!black,mark=none,thick,dotted] coordinates {
   (0,3.041)(1,3.037)(2,3.034)(3,2.980)
   (4,2.776)(5,2.025)(6,2.016)(7,3.249)(8,4.193)(9,4.202)
@@ -816,46 +726,37 @@ CXL: \textbf{both} higher throughput and lower latency. No throughput--latency t
   (30,3.176)(31,2.658)
 };
 \addlegendentry{16T}
-% Paper Fig.~17 curves (CX-6, r650, digitized -- first 24 s)
-\addplot[color=papercolor!60,mark=none,thin] coordinates {
-  (0,2.2)(3,2.2)(5.5,1.5)(6,1.5)(7,1.8)(8,2.1)(10,2.2)
-  (12,2.0)(12.5,1.5)(13.5,1.8)(15,2.1)(17,2.2)
-  (18,1.5)(18.5,1.5)(19.5,1.8)(21,2.2)(24,2.2)};
-\addlegendentry{Paper 8T (CX-6)}
 \addplot[color=papercolor,mark=none,thin,dashed] coordinates {
   (0,2.8)(3,2.7)(5,2.3)(6,1.8)(7,2.0)(8,2.7)(10,2.5)
   (12,2.0)(13,2.2)(14.5,2.5)(17,2.5)
   (18,2.0)(19,2.2)(21,2.5)(24,2.8)};
-\addlegendentry{Paper 12T (CX-6)}
+\addlegendentry{P\,12T}
 \addplot[color=papercolor!40!black,mark=none,thin,dashdotted] coordinates {
   (0,4.0)(3,4.0)(4.5,3.5)(5.5,2.0)(6,1.8)(7,2.5)(8,4.2)(12,4.2)
   (12.5,2.5)(13,2.2)(14,3.5)(15,4.2)(17,4.2)
   (18,3.5)(18.5,2.0)(19,2.0)(20.5,3.8)(21,4.2)(24,4.2)};
-\addlegendentry{Paper 16T (CX-6)}
+\addlegendentry{P\,16T}
 \end{axis}
 \end{tikzpicture}
+{\tiny Erratic post-resize spikes $\pm$38\% vs.\ paper's smooth $\sim$52\% dip}
 
-\small Bold = our CX-3 (4/8/12/16T); thin green = Paper Fig.~17 (CX-6, first 24\,s). Paper: smooth $\sim$52\% dip, $\sim$1.5\,s; ours: erratic post-resize spikes overshooting pre-resize by up to 38\%.
-\end{frame}
-
-% ──────────────────────────────────────────────────────────────────────────────
-\begin{frame}{Resize Behavior: CXL/NUMA}
+\column{0.50\textwidth}
 \centering
+{\small\textbf{CXL/NUMA (c6420, 20M keys, YCSB-D)}}\\[2pt]
 \begin{tikzpicture}
 \begin{axis}[
-    width=0.85\textwidth,
-    height=5.5cm,
+    width=\columnwidth,
+    height=4.2cm,
     ylabel={Throughput (MOPS)},
-    xlabel={Time (seconds)},
+    xlabel={Time (s)},
     ymin=0, ymax=44,
     xmin=0, xmax=119,
     grid=major, grid style={gray!20},
-    title style={font=\small},
-    title={CXL/NUMA Resize Time Series (20M keys, YCSB-D)},
-    legend style={at={(0.98,0.98)},anchor=north east,font=\scriptsize},
-    tick label style={font=\scriptsize},
+    legend style={at={(0.98,0.98)},anchor=north east,font=\tiny},
+    tick label style={font=\tiny},
+    ylabel style={font=\scriptsize},
+    xlabel style={font=\scriptsize},
 ]
-% 8 threads
 \addplot[color=numacolor,mark=none,thick,dashed] coordinates {
   (0,20.35)(1,20.39)(2,20.27)(3,20.19)(4,13.02)(5,16.74)
   (6,18.54)(7,18.42)(8,18.35)(9,18.28)(10,17.55)(11,17.36)
@@ -877,7 +778,6 @@ CXL: \textbf{both} higher throughput and lower latency. No throughput--latency t
   (102,16.78)(103,16.47)(104,15.96)(105,15.99)(106,15.62)(107,5.89)
 };
 \addlegendentry{8T}
-% 12 threads
 \addplot[color=numacolor!70!black,mark=none,thick] coordinates {
   (0,30.23)(1,30.25)(2,30.04)(3,13.08)(4,26.31)(5,26.07)
   (6,25.92)(7,25.00)(8,24.79)(9,7.10)(10,9.18)(11,25.71)
@@ -899,7 +799,6 @@ CXL: \textbf{both} higher throughput and lower latency. No throughput--latency t
   (102,22.90)(103,22.88)(104,22.74)(105,13.57)
 };
 \addlegendentry{12T}
-% 16 threads
 \addplot[color=numacolor!40!black,mark=none,thick,dashdotted] coordinates {
   (0,39.84)(1,39.79)(2,18.07)(3,31.38)(4,33.28)(5,32.92)
   (6,31.61)(7,31.47)(8,16.58)(9,0)(10,26.47)(11,32.50)
@@ -925,118 +824,57 @@ CXL: \textbf{both} higher throughput and lower latency. No throughput--latency t
 \addlegendentry{16T}
 \end{axis}
 \end{tikzpicture}
-
-\small $\sim$95\% stall for 1--12\,s; 16T R4 stall lasts $\sim$12\,s at high table occupancy
+{\tiny $\sim$95\% stall for 1--12\,s; 16T stall $\sim$12\,s at high table occupancy}
+\end{columns}
 \end{frame}
 
 % ──────────────────────────────────────────────────────────────────────────────
-\begin{frame}{Memory Usage: Paper vs.\ Reality --- LF\,=\,0.80 \& 0.85}
+\begin{frame}{Memory Usage: Paper vs.\ Reality --- LF\,=\,0.80, 0.85, 0.90 \& 0.95}
 \begin{columns}[T]
 \column{0.50\textwidth}
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    width=\columnwidth,
-    height=5cm,
-    xlabel style={font=\scriptsize},
-    xlabel={KV Pairs (M)},
-    ylabel style={font=\scriptsize},
-    ylabel={DMPH Index (MB)},
-    xtick={20,40,60,80,100},
-    ymin=0, ymax=75,
+    width=\columnwidth, height=3.0cm,
+    xlabel={KV Pairs (M)}, xlabel style={font=\tiny},
+    ylabel={DMPH (MB)}, ylabel style={font=\tiny},
+    xtick={20,60,100}, ymin=0, ymax=75,
     grid=major, grid style={gray!20},
-    legend style={at={(0.02,0.98)},anchor=north west,font=\tiny,row sep=-2pt},
+    tick label style={font=\tiny},
     every axis plot/.append style={thick},
-    title style={font=\small},
-    title={LF = 0.80}
+    title style={font=\scriptsize}, title={LF = 0.80}
 ]
-\addplot[color=papercolor,dashed,mark=o,mark size=1.8pt]
+\addplot[color=papercolor,dashed,mark=o,mark size=1.2pt]
   coordinates {(20,11.52)(40,23.03)(60,34.55)(80,46.06)(100,57.58)};
-\addlegendentry{Paper Formula}
-\addplot[color=papercolor!50!black,densely dashed,mark=pentagon*,mark size=1.8pt]
+\addplot[color=papercolor!50!black,densely dashed,mark=pentagon*,mark size=1.2pt]
   coordinates {(20,12.5)(40,25)(60,37)(80,50)(100,58)};
-\addlegendentry{Paper Fig.\,16 (est.)}
-\addplot[color=rdmacolor,mark=square*,mark size=1.8pt]
+\addplot[color=rdmacolor,mark=square*,mark size=1.2pt]
   coordinates {(20,15.48)(40,30.95)(60,61.88)(80,61.88)(100,61.88)};
-\addlegendentry{RDMA Measured}
-\addplot[color=numacolor,mark=triangle*,mark size=1.8pt,densely dotted]
+\addplot[color=numacolor,mark=triangle*,mark size=1.2pt,densely dotted]
   coordinates {(20,15.47)(40,30.93)(60,61.87)(80,61.87)(100,61.87)};
-\addlegendentry{CXL Measured}
 \end{axis}
 \end{tikzpicture}
 
-\column{0.50\textwidth}
-\centering
+\vspace{4pt}
 \begin{tikzpicture}
 \begin{axis}[
-    width=\columnwidth,
-    height=5cm,
-    xlabel style={font=\scriptsize},
-    xlabel={KV Pairs (M)},
-    ylabel style={font=\scriptsize},
-    ylabel={DMPH Index (MB)},
-    xtick={20,40,60,80,100},
-    ymin=0, ymax=75,
+    width=\columnwidth, height=3.0cm,
+    xlabel={KV Pairs (M)}, xlabel style={font=\tiny},
+    ylabel={DMPH (MB)}, ylabel style={font=\tiny},
+    xtick={20,60,100}, ymin=0, ymax=75,
     grid=major, grid style={gray!20},
-    legend style={at={(0.02,0.98)},anchor=north west,font=\tiny,row sep=-2pt},
+    tick label style={font=\tiny},
     every axis plot/.append style={thick},
-    title style={font=\small},
-    title={LF = 0.85}
+    title style={font=\scriptsize}, title={LF = 0.90}
 ]
-\addplot[color=papercolor,dashed,mark=o,mark size=1.8pt]
-  coordinates {(20,11.17)(40,22.33)(60,33.50)(80,44.66)(100,55.83)};
-\addlegendentry{Paper Formula}
-\addplot[color=papercolor!50!black,densely dashed,mark=pentagon*,mark size=1.8pt]
-  coordinates {(20,12.5)(40,25)(60,37)(80,50)(100,58)};
-\addlegendentry{Paper Fig.\,16 (est.)}
-\addplot[color=rdmacolor,mark=square*,mark size=1.8pt]
-  coordinates {(20,15.95)(40,31.88)(60,63.75)(80,63.75)(100,63.75)};
-\addlegendentry{RDMA Measured}
-\addplot[color=numacolor,mark=triangle*,mark size=1.8pt,densely dotted]
-  coordinates {(20,15.93)(40,31.87)(60,63.73)(80,63.73)(100,63.73)};
-\addlegendentry{CXL Measured}
-\end{axis}
-\end{tikzpicture}
-\end{columns}
-
-\vspace{3pt}
-\centering\small
-Power-of-2 bucket allocation $\Rightarrow$ step-wise jumps; 60M jump = \textbf{72\% over} paper prediction
-\end{frame}
-
-% ──────────────────────────────────────────────────────────────────────────────
-\begin{frame}{Memory Usage: Paper vs.\ Reality --- LF\,=\,0.90 \& 0.95}
-\begin{columns}[T]
-\column{0.50\textwidth}
-\centering
-\begin{tikzpicture}
-\begin{axis}[
-    width=\columnwidth,
-    height=5cm,
-    xlabel style={font=\scriptsize},
-    xlabel={KV Pairs (M)},
-    ylabel style={font=\scriptsize},
-    ylabel={DMPH Index (MB)},
-    xtick={20,40,60,80,100},
-    ymin=0, ymax=75,
-    grid=major, grid style={gray!20},
-    legend style={at={(0.02,0.98)},anchor=north west,font=\tiny,row sep=-2pt},
-    every axis plot/.append style={thick},
-    title style={font=\small},
-    title={LF = 0.90}
-]
-\addplot[color=papercolor,dashed,mark=o,mark size=1.8pt]
+\addplot[color=papercolor,dashed,mark=o,mark size=1.2pt]
   coordinates {(20,10.85)(40,21.71)(60,32.56)(80,43.41)(100,54.27)};
-\addlegendentry{Paper Formula}
-\addplot[color=papercolor!50!black,densely dashed,mark=pentagon*,mark size=1.8pt]
+\addplot[color=papercolor!50!black,densely dashed,mark=pentagon*,mark size=1.2pt]
   coordinates {(20,12.5)(40,25)(60,37)(80,50)(100,58)};
-\addlegendentry{Paper Fig.\,16 (est.)}
-\addplot[color=rdmacolor,mark=square*,mark size=1.8pt]
+\addplot[color=rdmacolor,mark=square*,mark size=1.2pt]
   coordinates {(20,16.42)(40,32.82)(60,32.82)(80,65.62)(100,65.62)};
-\addlegendentry{RDMA Measured}
-\addplot[color=numacolor,mark=triangle*,mark size=1.8pt,densely dotted]
+\addplot[color=numacolor,mark=triangle*,mark size=1.2pt,densely dotted]
   coordinates {(20,16.40)(40,32.80)(60,32.80)(80,65.60)(100,65.60)};
-\addlegendentry{CXL Measured}
 \end{axis}
 \end{tikzpicture}
 
@@ -1044,80 +882,60 @@ Power-of-2 bucket allocation $\Rightarrow$ step-wise jumps; 60M jump = \textbf{7
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    width=\columnwidth,
-    height=5cm,
-    xlabel style={font=\scriptsize},
-    xlabel={KV Pairs (M)},
-    ylabel style={font=\scriptsize},
-    ylabel={DMPH Index (MB)},
-    xtick={20,40,60,80,100},
-    ymin=0, ymax=75,
+    width=\columnwidth, height=3.0cm,
+    xlabel={KV Pairs (M)}, xlabel style={font=\tiny},
+    ylabel={DMPH (MB)}, ylabel style={font=\tiny},
+    xtick={20,60,100}, ymin=0, ymax=75,
     grid=major, grid style={gray!20},
-    legend style={at={(0.02,0.98)},anchor=north west,font=\tiny,row sep=-2pt},
+    tick label style={font=\tiny},
     every axis plot/.append style={thick},
-    title style={font=\small},
-    title={LF = 0.95}
+    title style={font=\scriptsize}, title={LF = 0.85}
 ]
-\addplot[color=papercolor,dashed,mark=o,mark size=1.8pt]
-  coordinates {(20,10.57)(40,21.15)(60,31.72)(80,42.30)(100,52.87)};
-\addlegendentry{Paper Formula}
-\addplot[color=papercolor!50!black,densely dashed,mark=pentagon*,mark size=1.8pt]
+\addplot[color=papercolor,dashed,mark=o,mark size=1.2pt]
+  coordinates {(20,11.17)(40,22.33)(60,33.50)(80,44.66)(100,55.83)};
+\addplot[color=papercolor!50!black,densely dashed,mark=pentagon*,mark size=1.2pt]
   coordinates {(20,12.5)(40,25)(60,37)(80,50)(100,58)};
-\addlegendentry{Paper Fig.\,16 (est.)}
-\addplot[color=rdmacolor,mark=square*,mark size=1.8pt]
+\addplot[color=rdmacolor,mark=square*,mark size=1.2pt]
+  coordinates {(20,15.95)(40,31.88)(60,63.75)(80,63.75)(100,63.75)};
+\addplot[color=numacolor,mark=triangle*,mark size=1.2pt,densely dotted]
+  coordinates {(20,15.93)(40,31.87)(60,63.73)(80,63.73)(100,63.73)};
+\end{axis}
+\end{tikzpicture}
+
+\vspace{4pt}
+\begin{tikzpicture}
+\begin{axis}[
+    width=\columnwidth, height=3.0cm,
+    xlabel={KV Pairs (M)}, xlabel style={font=\tiny},
+    ylabel={DMPH (MB)}, ylabel style={font=\tiny},
+    xtick={20,60,100}, ymin=0, ymax=75,
+    grid=major, grid style={gray!20},
+    tick label style={font=\tiny},
+    every axis plot/.append style={thick},
+    title style={font=\scriptsize}, title={LF = 0.95}
+]
+\addplot[color=papercolor,dashed,mark=o,mark size=1.2pt]
+  coordinates {(20,10.57)(40,21.15)(60,31.72)(80,42.30)(100,52.87)};
+\addplot[color=papercolor!50!black,densely dashed,mark=pentagon*,mark size=1.2pt]
+  coordinates {(20,12.5)(40,25)(60,37)(80,50)(100,58)};
+\addplot[color=rdmacolor,mark=square*,mark size=1.2pt]
   coordinates {(20,16.42)(40,32.82)(60,32.82)(80,65.62)(100,65.62)};
-\addlegendentry{RDMA Measured}
-\addplot[color=numacolor,mark=triangle*,mark size=1.8pt,densely dotted]
+\addplot[color=numacolor,mark=triangle*,mark size=1.2pt,densely dotted]
   coordinates {(20,16.87)(40,33.73)(60,33.73)(80,67.47)(100,67.47)};
-\addlegendentry{CXL Measured}
 \end{axis}
 \end{tikzpicture}
 \end{columns}
 
-\vspace{3pt}
-\centering\small
-LF\,=\,0.90: resize deferred to 80M (below threshold at 60M); LF\,=\,0.95: CXL slightly higher due to alignment
+\vspace{2pt}
+\centering\scriptsize
+\textcolor{papercolor}{--- Formula} \quad \textcolor{papercolor!50!black}{--$\bullet$ Fig.16} \quad \textcolor{rdmacolor}{$\blacksquare$ RDMA} \quad \textcolor{numacolor}{$\blacktriangle$ CXL} \hfill
+Power-of-2 allocation $\Rightarrow$ step-wise jumps; LF$\leq$0.85: 60M jump $\sim$\textbf{72\% over} paper
 \end{frame}
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Key Findings Summary}
 % ══════════════════════════════════════════════════════════════════════════════
 
-\begin{frame}{Headline Numbers}
-\centering
-\large
-
-\begin{tabular}{@{}lcc@{}}
-\toprule
-\textbf{Metric} & \textbf{RDMA (ours)} & \textbf{CXL/NUMA (c6420)} \\
-\midrule
-Peak YCSB-C        & 5.04\,MOPS & \textcolor{numacolor}{\textbf{118\,MOPS}} \\
-Peak YCSB-D        & 4.28\,MOPS & \textcolor{numacolor}{\textbf{130\,MOPS}} \\
-Mean Latency        & 3.04\,$\mu$s & \textcolor{numacolor}{\textbf{0.14\,$\mu$s}} \\
-Scaling              & Sub-linear & \textcolor{numacolor}{\textbf{Near-linear}} \\
-Bottleneck           & MN CPU + NIC & DRAM bandwidth \\
-\bottomrule
-\end{tabular}
-
-\vspace{12pt}
-
-\begin{columns}[c]
-\column{0.3\textwidth}
-\centering
-{\Huge\textcolor{numacolor}{\textbf{23$\times$}}}\\
-\small throughput\\improvement
-\column{0.3\textwidth}
-\centering
-{\Huge\textcolor{numacolor}{\textbf{21$\times$}}}\\
-\small latency\\reduction
-\column{0.3\textwidth}
-\centering
-{\Huge\textcolor{numacolor}{\textbf{0}}}\\
-\small need for\\coroutines
-\end{columns}
-\end{frame}
-
-% ──────────────────────────────────────────────────────────────────────────────
 \begin{frame}{Reproduction vs.\ Paper: Discrepancy Summary}
 \centering
 \small
@@ -1208,6 +1026,97 @@ superior transport for DMPH-indexed KV stores.
 {\Huge\textbf{Thank You}}\\[12pt]
 {\Large Questions?}
 \vfill
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\appendix
+\begin{frame}{Appendix}
+\centering
+{\Large Backup Slides}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{Resize State Machine}
+\centering
+\begin{tikzpicture}[
+  state/.style={draw, rounded corners, fill=numacolor!15, minimum width=2.2cm, font=\small, align=center},
+  arr/.style={-{Stealth}, thick},
+  node distance=1.4cm and 1.3cm
+]
+  \node[state] (n) {NORMAL};
+  \node[state, right=of n] (pr) {PRE\_\\RESIZE};
+  \node[state, right=of pr] (cp) {COPYING};
+  \node[state, below=of cp] (rs) {READY\_TO\\SWITCH};
+  \node[state, left=of rs] (dr) {DRAIN\_\\OLD};
+  \node[state, left=of dr] (gc) {GC\_\\PENDING};
+
+  \draw[arr] (n) -- (pr);
+  \draw[arr] (pr) -- (cp);
+  \draw[arr] (cp) -- (rs);
+  \draw[arr] (rs) -- (dr);
+  \draw[arr] (dr) -- (gc);
+  \draw[arr] (gc) -- (n);
+\end{tikzpicture}
+
+\vspace{8pt}
+\begin{itemize}
+  \item Each epoch creates a new versioned shared-memory region
+  \item Clients detect changes via generation counter, transparently remap
+  \item Mutations deferred during COPYING/DRAIN, replayed after switch
+\end{itemize}
+\end{frame}
+
+% ──────────────────────────────────────────────────────────────────────────────
+\begin{frame}{DMPH Lookup: How One-Hop Works}
+\centering
+\begin{tikzpicture}[
+  stepbox/.style={draw, rounded corners=3pt, minimum height=0.5cm,
+               font=\scriptsize, inner sep=3pt, text width=4.8cm, align=left},
+  lbl/.style={font=\scriptsize\bfseries, anchor=east},
+  arr/.style={-{Stealth[length=3pt]}, thick, gray!70},
+  node distance=0.22cm,
+]
+  % CN steps
+  \node[stepbox, fill=rdmacolor!10] (s1)
+        {\texttt{h(key)} $\to$ 2 candidate buckets};
+  \node[lbl, left=3pt of s1] {CN};
+  \node[stepbox, fill=rdmacolor!10, below=of s1] (s2)
+        {Othello XOR $\to$ pick correct bucket};
+  \node[stepbox, fill=rdmacolor!10, below=of s2] (s3)
+        {Seed + hash $\to$ exact slot (0--3)};
+  \node[stepbox, fill=rdmacolor!10, below=of s3] (s4)
+        {Result: \texttt{(bucket, slot)} = location};
+
+  % Network
+  \node[stepbox, fill=yellow!15, below=0.35cm of s4, text width=4.8cm, align=center] (net)
+        {\textbf{Single RPC:} \texttt{(bucket, slot, key)}};
+
+  % MN steps
+  \node[stepbox, fill=numacolor!10, below=0.35cm of net] (m1)
+        {\texttt{addr = Buckets[bkt][slot].addr}};
+  \node[lbl, left=3pt of m1] {MN};
+  \node[stepbox, fill=numacolor!10, below=of m1] (m2)
+        {\texttt{val = PackedData[addr]} $\to$ reply};
+
+  % Arrows
+  \foreach \a/\b in {s1/s2, s2/s3, s3/s4, s4/net, net/m1, m1/m2}
+    \draw[arr] (\a) -- (\b);
+
+  % Annotation
+  \node[right=0.6cm of s2, font=\tiny, text width=4cm, align=left,
+        fill=white, draw=gray!40, rounded corners=2pt, inner sep=3pt] (ann)
+    {\textbf{All local} (ns-scale):\\[1pt]
+     Othello: \texttt{A[h$_1$(k)] $\oplus$ B[h$_2$(k)]}\\
+     Seed $\to$ slot: top 2 bits of \texttt{hash(s,k)}\\[2pt]
+     \textbf{No keys/values on CN}\\
+     $\Rightarrow$ $\sim$12.5\,MB for 20M keys (paper)};
+  \draw[gray!40, thick, dashed] (s2.east) -- (ann.west);
+
+\end{tikzpicture}
+
+\vspace{4pt}
+\small
+\textbf{vs.\ baselines:} RACE needs 2--3 hops (hash chain); tree indices need $O(\log n)$ traversals
 \end{frame}
 
 \end{document}

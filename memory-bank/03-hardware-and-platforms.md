@@ -52,10 +52,12 @@ proxy.
 
 | Field | Value |
 |---|---|
-| CPU | Intel Xeon Gold 6338N, 32 cores |
+| CPU | 2x Intel Xeon Platinum 8360Y, 36 cores each (72 cores/node) |
 | Memory | 256 GB |
 | NIC | Mellanox ConnectX-6, 100 Gbps |
-| Scale | Up to 9 nodes, up to 144 threads per shard |
+| Topology | 6 nodes total, 2 shards, each shard = 1 MN + 2 CN |
+| MN threads | 1 per shard in Fig.9 throughput plot |
+| CN threads | Up to 144 per shard (2 CN x 72 cores) |
 
 ## Platform D: Outback paper Figure 10 cluster (reference)
 
@@ -65,13 +67,15 @@ Differences from our setup are only **scale**, not hardware:
 | Aspect | Paper Fig.10 | Our reproduction |
 |---|---|---|
 | Total nodes | 9 (1 MN + 8 CN) | 3 (1 MN + 2 CN) |
-| MN threads | 4 | 1 |
-| Max CN threads | 64 | 32 |
+| MN nodes | 1 | 1 |
+| MN threads | 4 (on the single MN node) | 1 |
+| Max CN threads | 64 (8 CN x 8 threads/CN) | 32 (2 CN x 16 threads/CN) |
 
 ## Forbidden phrasings (do not write these)
 
 - ❌ "Xeon D-1548 / 64 GB / RoCE 10 Gbps" for the RDMA setup
 - ❌ "ConnectX-3 10 Gbps" — the CX-3 here runs IB FDR @ 56 Gbps, not 10 Gbps Ethernet
 - ❌ "FDR @ 50 Gbps" — FDR is 56 Gbps per CloudLab fabric description
+- ❌ "Fig.10 uses 4MN" — Fig.10 uses 1 MN node with 4 MN threads (4 MNT)
 - ❌ "huge-page pool exhaustion" as the cause of OOM-at-80M — actual cause is
       r320's 16 GB DRAM limit

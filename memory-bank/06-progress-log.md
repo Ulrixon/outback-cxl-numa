@@ -4,6 +4,30 @@ Append new entries **at the top**. Use ISO date + one-line summary + bullets.
 
 ---
 
+## 2026-04-21 — Topology corrections + RDMA plot split (1CN vs 2CN)
+- Corrected paper hardware/topology claims across docs:
+  - Fig.9 reference now uses: 6 nodes total, 2 shards, each shard = 1MN + 2CN,
+    2x Xeon Platinum 8360Y (36 cores each), CX-6 100 Gbps, 1 MNT/shard.
+  - Fig.10 reference now uses: 9 r320 nodes, 1MN + 8CN, 4 MN threads on a
+    single MN node (not "4 MN nodes").
+- Clarified CXL/NUMA "no MN CPU" wording:
+  - `mem_threads` in NUMA mode is insert-lane sharding of
+    `lane_next_free_index[N]`, not MN worker threads.
+  - Reads do not touch this counter path; write-side effect is minor
+    (observed <2% variance across low values).
+- Fixed RDMA YCSB comparison plot quality in both `docs/Slides.tex` and
+  `docs/Final_Report.tex`:
+  - Replaced merged "ours" line with two explicit curves per workload:
+    1CN (filled markers) and 2CN (hollow markers).
+  - Kept paper styling consistent: Fig.9 dashed, Fig.10 dotted.
+  - Corrected wording from "4MN" to "1MN+8CN, 4MNT".
+- Slide layout cleanup:
+  - Resolved overlap/overflow on RDMA YCSB frame.
+  - Removed LF=0.80 auto-legend overlap in Memory Usage frame.
+- Verified compilation after updates:
+  - `docs/Slides.pdf` builds cleanly (24 pages).
+  - `docs/Final_Report.pdf` builds cleanly (18 pages).
+
 ## 2026-04-18 — Documentation consolidation
 - Moved 5 markdown docs from repo root into `memory-bank/`:
   - `README_NUMA.md` → `08-numa-architecture.md`

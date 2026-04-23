@@ -59,9 +59,9 @@ Reproduction, CXL Extension, and Comparative Analysis}
 
 \subsection{Background}
 
-Outback is an RDMA-based Key-Value Store designed for disaggregated memory architectures. It employs a disaggregated memory model where Memory Nodes (MN) store KV data and Compute Nodes (CN) maintain a lightweight Dynamic Minimal Perfect Hashing (DMPH) index locally. The DMPH index (composed of Ludo seed arrays and an Othello bucket locator) enables clients to resolve key locations with a single one-sided RDMA read, avoiding the CPU overhead of two-sided RPC on the memory node. The original paper claims up to a 5.03$\times$ throughput gain over baselines (RACE, RPC-MICA) and a minimal memory footprint (12.5\,MB to index 20M KV pairs). When the hash table exceeds its load factor threshold, a resize operation rebuilds the DMPH index and redistributes data.
+Outback~\cite{outback} is an RDMA-based Key-Value Store designed for disaggregated memory architectures. It employs a disaggregated memory model where Memory Nodes (MN) store KV data and Compute Nodes (CN) maintain a lightweight Dynamic Minimal Perfect Hashing (DMPH) index locally. The DMPH index (composed of Ludo~\cite{ludo} seed arrays and an Othello bucket locator) enables clients to resolve key locations with a single one-sided RDMA read, avoiding the CPU overhead of two-sided RPC on the memory node. The original paper claims up to a 5.03$\times$ throughput gain over baselines (RACE~\cite{race}, RPC-MICA~\cite{mica}) and a minimal memory footprint (12.5\,MB to index 20M KV pairs). When the hash table exceeds its load factor threshold, a resize operation rebuilds the DMPH index and redistributes data.
 
-Compute Express Link (CXL) is an open interconnect standard built on PCIe that enables cache-coherent shared memory between host CPUs and attached devices. CXL.mem provides load/store semantics to remote memory at sub-microsecond latency ($\sim$150--300\,ns), significantly faster than RDMA ($\sim$2--5\,$\mu$s) but slower than local DRAM ($\sim$100\,ns).
+Compute Express Link (CXL)~\cite{cxl} is an open interconnect standard built on PCIe that enables cache-coherent shared memory between host CPUs and attached devices. CXL.mem provides load/store semantics to remote memory at sub-microsecond latency ($\sim$150--300\,ns), significantly faster than RDMA ($\sim$2--5\,$\mu$s) but slower than local DRAM ($\sim$100\,ns).
 
 \subsection{Project Goal}
 
@@ -93,11 +93,11 @@ The Outback paper evaluates on two CloudLab configurations:
 \toprule
 \textbf{Parameter} & \textbf{Primary (r650)} & \textbf{Secondary (r320)} \\
 \midrule
-CPU        & Xeon Gold 6338N, 32C/64T, 2.2\,GHz & Xeon E5-2450, 8C/16T, 2.1\,GHz \\
+CPU        & 2$\times$Xeon Platinum 8360Y, 36C/72T, 2.4\,GHz & Xeon E5-2450, 8C/16T, 2.1\,GHz \\
 Memory     & 256\,GB DDR4                              & 16\,GB DDR4 \\
 Network    & ConnectX-6, 100\,Gbps             & ConnectX-3 MX354A, 56\,Gbps FDR \\
-Topology   & Up to 9 nodes (1\,MN + 4--8\,CN)          & Up to 9 nodes (1\,MN + 8\,CN) \\
-MN Threads & 1--3/shard, 2 shards                  & 4 \\
+Topology   & 6 nodes: 2 shards, 1\,MN + 2\,CN each & Up to 9 nodes (1\,MN + 8\,CN) \\
+MN Threads & 1/shard (Fig.~9), 1--3 (Fig.~12)    & 4 \\
 Max CN Threads & 144/shard                          & 64 (8/node) \\
 OS         & Not specified                              & Not specified \\
 \bottomrule
@@ -172,14 +172,16 @@ Table~\ref{tab:setup-diff} summarizes the key differences between the three envi
 \textbf{Factor} & \textbf{Paper (r650)} & \textbf{RDMA (ours)} & \textbf{CXL (c6420)} & \textbf{Expected Impact} \\
 \midrule
 NIC Speed & CX-6, 100\,Gbps IB & CX-3 MX354A, 56\,Gbps FDR IB & N/A (load/store) & $\sim$2$\times$ lower NIC BW vs.\ paper \\
-CPU & Xeon Gold 6338N, 32C & Xeon E5-2450, 8C & 2$\times$Xeon Gold 6142, 16C & RDMA: weaker per-shard CPU \\
+CPU & Platinum 8360Y, 2$\times$36C & Xeon E5-2450, 8C & 2$\times$Xeon Gold 6142, 16C & RDMA: weaker per-shard CPU \\
 Max Threads & 144 per shard & 32 (2$\times$16) & 32 (1 socket) & Cannot test high-thread behavior \\
-MN Threads & 1--3 (2 shards) & 1--3 & N/A & RDMA limited by MN CPU \\
-Node Count & Up to 9 & 3 & 1 & Fewer CN for RDMA \\
+MN Threads & 1--3 (2 shards) & 1--3 & none (no MN CPU)$^a$ & RDMA limited by MN CPU \\
+Node Count & 6 (2 shards $\times$ 3) & 3 & 1 & Fewer CN for RDMA \\
 Memory & 256\,GB & 16\,GB & 384\,GB & RDMA OOMs at 80M; CXL handles 80M \\
 Interconnect & PCIe / InfiniBand FDR & InfiniBand FDR & UPI $\sim$150\,ns & CXL $\sim$20$\times$ lower latency \\
 \bottomrule
 \end{tabular}}
+\vspace{2pt}
+{\scriptsize $^a$In CXL/NUMA, the ``memory node'' is NUMA node~1's DRAM only~--- no MN CPU runs. Compute threads pinned to NUMA0 access data via direct \texttt{load}/\texttt{store} over the UPI interconnect. The \texttt{mem\_threads} parameter is repurposed as \textbf{insert-lane sharding}: it partitions the \texttt{lane\_next\_free\_index} atomic allocation counter into $N$ independent lanes so that concurrent insert threads contend on different cache lines. It has zero effect on the read path (\texttt{ludo\_lookup} $\to$ \texttt{packed\_data} dereference never touches the counter) and negligible effect on writes because the bottleneck is UPI memory bus bandwidth for the actual data write, not the counter CAS. Measured throughput varies by $<$2\% across 1--3 \texttt{mem\_threads} (Section~\ref{sec:repro-mt}).}
 \end{table}
 
 We expect our RDMA reproduction to show \textbf{lower aggregate throughput} than the paper's CX-6 results because of both the $\sim$2$\times$ slower NIC link (56\,Gbps FDR vs.\ 100\,Gbps CX-6) and the smaller CN count, but \textbf{comparable per-MN-thread throughput} once the MN CPU becomes the bottleneck (since serialization of RPC dispatch on the MN dominates over network bandwidth at small thread counts). Because we use the \emph{same} \texttt{r320} hardware as the paper's Figure~10 cluster, our per-MN-thread comparison against Fig.~10 is a like-for-like measurement. The CXL/NUMA extension should show \textbf{dramatically higher throughput and lower latency} by eliminating the network stack entirely.
@@ -424,11 +426,11 @@ All RDMA experiments use the default configuration: 50\,M keys, DMPH load factor
 
 \subsubsection{RDMA vs.\ Paper YCSB Comparison}
 
-\begin{figure}[H]
+\begin{figure*}[t]
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    width=\columnwidth,
+    width=0.92\textwidth,
     height=8.5cm,
     ylabel={Throughput (MOPS)},
     xlabel={Number of CN Threads},
@@ -438,12 +440,12 @@ All RDMA experiments use the default configuration: 50\,M keys, DMPH load factor
     x tick label style={rotate=30,anchor=east,font=\tiny},
     xmin=1, xmax=200,
     ymin=0, ymax=20,
-    legend style={at={(0.5,-0.22)},anchor=north,font=\tiny,legend columns=5},
+    legend style={at={(0.02,0.98)},anchor=north west,font=\scriptsize,
+            fill=white,fill opacity=1,draw=black!30,text opacity=1},
     every axis plot/.append style={mark size=2.5pt, thick},
     grid=major, grid style={gray!30},
-    title={RDMA Repro vs.\ Paper Fig.~9 (CX-6, 1MN) \& Fig.~10 (CX-3, 4MN)}
 ]
-% Our RDMA reproduction (1MN 1CN, coro=2) -- solid lines with markers
+% Our RDMA reproduction (1CN): filled markers
 \addplot[color=numacolor,mark=square*]
   coordinates {(1,0.724)(2,1.411)(4,2.770)(8,4.503)(16,4.325)};
 \addplot[color=teal,mark=triangle*]
@@ -454,6 +456,17 @@ All RDMA experiments use the default configuration: 50\,M keys, DMPH load factor
   coordinates {(1,0.744)(2,1.460)(4,2.699)(8,3.832)(16,3.900)};
 \addplot[color=rdmacolor,mark=star]
   coordinates {(1,0.626)(2,1.194)(4,1.939)(8,2.213)(16,2.370)};
+% Our RDMA reproduction (2CN): hollow markers, same colors/shapes as 1CN
+\addplot[color=numacolor,mark=square*,mark options={fill=white}]
+  coordinates {(4,2.802)(8,4.269)(16,4.833)(32,5.040)};
+\addplot[color=teal,mark=triangle*,mark options={fill=white}]
+  coordinates {(4,2.777)(8,4.043)(16,4.461)(32,4.439)};
+\addplot[color=orange,mark=diamond*,mark options={fill=white}]
+  coordinates {(4,2.709)(8,3.649)(16,3.873)(32,4.049)};
+\addplot[color=purple!80,mark=pentagon*,mark options={fill=white}]
+  coordinates {(4,2.720)(8,3.982)(16,4.229)(32,4.281)};
+\addplot[color=rdmacolor,mark=star,mark options={fill=white}]
+  coordinates {(4,1.926)(8,2.157)(16,2.501)(32,2.354)};
 % Paper Fig.~9 Outback curves (CX-6, 1 MN thread, up to 144T) -- dashed, no markers
 \addplot[color=numacolor,mark=none,densely dashed,thick]
   coordinates {(8,1.0)(12,2.0)(20,3.5)(72,5.7)(108,6.0)(144,6.01)};
@@ -476,14 +489,17 @@ All RDMA experiments use the default configuration: 50\,M keys, DMPH load factor
   coordinates {(8,9.0)(16,11.5)(24,13.0)(32,14.5)(48,15.5)(64,16.0)};
 \addplot[color=rdmacolor,mark=none,dotted,thick]
   coordinates {(8,5.0)(16,7.0)(24,8.0)(32,8.5)(48,9.0)(64,9.0)};
-\legend{C\,(ours), B\,(ours), A\,(ours), D\,(ours), F\,(ours),
-        C\,(F9 CX-6), B\,(F9), A\,(F9), D\,(F9), F\,(F9),
-        C\,(F10 CX-3), B\,(F10), A\,(F10), D\,(F10), F\,(F10)}
+\legend{C, B, A, D, F}
 \end{axis}
 \end{tikzpicture}
-\caption{Three-way RDMA comparison across setups. \textbf{Solid markers} = our r320 reproduction (1MN, 1CN, coro=2, up to 16T) using the same CX-3 MX354A IB FDR 56\,Gbps hardware as paper Fig.~10. \textbf{Dashed lines} = paper Fig.~9 Outback (CX-6 100\,Gbps, 1 MN thread, up to 144T). \textbf{Dotted lines} = paper Fig.~10 Outback (r320 / CX-3 MX354A IB FDR 56\,Gbps, 4 MN threads, up to 64T). Same color per workload across all three sources. Fig.~10 reaches up to 17\,MOPS because it aggregates 4 MN threads --- per-MN-thread throughput ($\sim$4.25\,MOPS) closely matches our 1-MN reproduction ($\sim$4.5\,MOPS), confirming consistent per-thread performance on the same r320 hardware. Fig.~9 (CX-6) saturates at 5.5--6\,MOPS per MN thread due to the faster NIC. YCSB-F (red) is the lowest across all setups due to the DMPH write path cost.}
+\vspace{2pt}
+\parbox{0.92\textwidth}{\centering\scriptsize
+Filled markers: ours 1CN (1--16T) \quad Hollow markers: ours 2CN (4--32T)\\
+Dashed lines: Fig.~9 (6$\times$r650, CX-6, 1\,MNT/shard) \quad Dotted lines: Fig.~10 (9$\times$r320, CX-3, 4\,MNT)
+}
+\caption{Three-way RDMA comparison across setups. \textbf{Solid filled markers} = our r320 reproduction with 1\,CN (1\,MN+1\,CN, coro=2, 1--16\,T). \textbf{Solid hollow markers} = our r320 reproduction with 2\,CN (1\,MN+2\,CN, coro=2, 4--32\,T). Both use the same CX-3 MX354A IB FDR 56\,Gbps hardware as paper Fig.~10. \textbf{Dashed lines} = paper Fig.~9 Outback (6$\times$r650, CX-6 100\,Gbps, 1\,MN+2\,CN per shard, 1\,MNT/shard, up to 144\,T/shard). \textbf{Dotted lines} = paper Fig.~10 Outback (9$\times$r320, CX-3 56\,Gbps, 1\,MN+8\,CN, 4\,MN threads, up to 64\,T). Same color per workload across all sources. Fig.~10 reaches up to 17\,MOPS because it aggregates 4\,MN threads on a single MN node --- per-MN-thread throughput ($\sim$4.25\,MOPS) closely matches our 1-MN-thread reproduction ($\sim$4.5\,MOPS), confirming consistent per-thread performance on identical r320 hardware. Fig.~9 (CX-6) saturates at 5.5--6\,MOPS per MN thread due to the faster NIC. YCSB-F (red) is the lowest across all setups due to the DMPH write path cost.}
 \label{fig:rdma-ycsb-all}
-\end{figure}
+\end{figure*}
 
 \begin{figure}[H]
 \centering
@@ -518,7 +534,7 @@ All RDMA experiments use the default configuration: 50\,M keys, DMPH load factor
 
 \subsubsection{Comparison to Paper Figure~9}
 
-The paper's Figure~9 reports throughput on r650 nodes with CX-6 100\,Gbps NICs, using 2 shards, 1 MN thread per shard, and up to 144 CN threads. Table~\ref{tab:paper-fig9} shows the paper's reported peaks alongside our RDMA reproduction.
+The paper's Figure~9 reports throughput on r650 nodes with CX-6 100\,Gbps NICs, using 6 nodes (2 shards of 1\,MN + 2\,CN each), 1 MN thread per shard, and up to 144 CN threads (2\,CN $\times$ 72 cores each). Table~\ref{tab:paper-fig9} shows the paper's reported peaks alongside our RDMA reproduction.
 
 \begin{table}[H]
 \centering
@@ -2124,6 +2140,128 @@ Code completeness & Implied & Resizing on separate branch; hard-coded limits; na
 \end{table}
 
 % ══════════════════════════════════════════════════════════════════════════════
+\section{Literature Review}
+% ══════════════════════════════════════════════════════════════════════════════
+
+This section surveys the systems and techniques directly relevant to this work:
+the Outback paper being reproduced, the RDMA-based KV store baselines compared in
+all experiment graphs, the hashing primitives that underpin Outback's index, and
+the CXL memory interconnect technology used for the extension.
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{The Reproduced Paper: Outback}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\textbf{Outback}~\cite{outback} is the primary system studied in this report.
+It addresses the \emph{one-sided vs.\ two-sided RDMA dilemma}: one-sided RDMA
+requires multiple round trips for traditional hash or tree indexes; two-sided RPC
+resolves the index in one round trip but imposes CPU load on memory nodes,
+violating the disaggregation principle.  Outback resolves this by splitting the
+index into two components:
+\begin{itemize}[nosep]
+  \item A \emph{compute-heavy, memory-efficient} DMPH seed component
+        (Ludo~\cite{ludo} arrays) cached entirely on compute nodes.
+  \item A \emph{memory-heavy, compute-efficient} Othello bucket-locator
+        component residing on memory nodes and accessed with a single
+        one-sided RDMA READ.
+\end{itemize}
+The prototype is evaluated on a CloudLab cluster using Mellanox ConnectX-6
+100\,Gbps InfiniBand and achieves 1.06--5.03$\times$ throughput over the
+state-of-the-art baselines (RACE, RPC-MICA, Cluster) on YCSB workloads.
+Published as a full paper in \emph{PVLDB}, vol.\ 18, 2024.
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{Baseline Systems Compared in the Graphs}
+% ──────────────────────────────────────────────────────────────────────────────
+
+The experiment graphs in Sections~\ref{sec:repro-ycsb}--\ref{sec:repro-resize}
+and in the three-way comparative analysis include three published baselines.
+
+\textbf{RACE}~\cite{race} (\emph{One-Sided RDMA-Conscious Extendible Hashing}) is
+an extendible hashing index designed for disaggregated memory~\cite{race}.  All
+operations --- lookups, inserts, and resizing --- are performed via one-sided RDMA
+verbs without involving memory-node CPUs. RACE uses a lock-free remote concurrency
+control scheme and extendible remote resizing.  Outback's paper reports 2.43--5.03$\times$
+throughput over RACE on YCSB-A/C; our RDMA reproduction corroborates the relative
+ordering (5.04\,MOPS vs.\ the paper's 4.59\,MOPS for RACE at equivalent thread counts).
+Published in \emph{USENIX ATC 2021}.
+
+\textbf{MICA}~\cite{mica} (\emph{A Holistic Approach to Fast In-Memory Key-Value
+Storage}) is a single-machine in-memory KV store tuned for multi-core CPUs with
+kernel-bypass networking~\cite{mica}. It achieves 65--77\,MOPS on a single server
+using partitioned data and a lightweight DPDK-based network stack. In Outback's
+evaluation, MICA is invoked via two-sided RPC (\textit{RPC-MICA}), which adds
+network round-trip overhead; it is the weakest baseline in the paper's
+YCSB-C comparison (2.47\,MOPS at 72 CN threads).
+Published in \emph{USENIX NSDI 2014}.
+
+\textbf{Cluster RPC} is the third baseline reported in Outback's Figure~9.  It
+represents a conventional cluster-hash approach (similar to the hash table in
+DrTM+R~\cite{drtmr}) accessed via two-sided RPC.  It reaches $\sim$5.41\,MOPS at
+72 threads --- slightly above RACE and slightly below Outback --- forming the
+middle of the baseline band in all throughput-scaling figures.
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{Additional Related RDMA KV Stores in the Codebase}
+% ──────────────────────────────────────────────────────────────────────────────
+
+The repository also contains benchmark stubs for three additional RDMA KV
+systems that appear in related work comparisons in the broader literature,
+though they are not plotted as baselines in this report's graphs.
+
+\textbf{FaSST}~\cite{fasst} (\emph{Fast, Scalable and Simple Distributed
+Transactions}) uses two-sided unreliable-datagram RPCs over RDMA instead of
+one-sided operations~\cite{fasst}.  It demonstrates that two-sided RPCs can
+outperform one-sided RDMA in transactional workloads because of better
+flexibility, while avoiding the scalability bottlenecks of RC-based one-sided
+RDMA in large clusters.  Published in \emph{OSDI 2016}.
+
+\textbf{DrTM+R}~\cite{drtmr} (\emph{Fast In-Memory Transaction Processing Using
+RDMA and HTM}) combines RDMA with hardware transactional memory (HTM) to achieve
+high-performance distributed ACID transactions~\cite{drtmr}.  The \texttt{r2}
+communication library used by Outback is derived from DrTM+H, the successor
+system presented at \emph{OSDI 2018}~\cite{drtmh}.
+
+\textbf{ROLEX}~\cite{rolex} (\emph{A Scalable RDMA-oriented Learned Key-Value
+Store for Disaggregated Memory Systems}) replaces perfect-hash indexes with
+learned indexes (B-tree models) to reduce the number of RDMA round trips for
+lookups~\cite{rolex}.  Like Outback, it processes all requests on compute nodes
+via one-sided RDMA.  Published in \emph{USENIX FAST 2023}.
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{Key Algorithmic Primitives}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\textbf{Ludo Hashing}~\cite{ludo} is the compact perfect-hashing scheme that
+forms the compute-node component of Outback's DMPH index~\cite{ludo}. It achieves
+$3.76 + 1.05\ell$ bits per key-value item (for $\ell$-bit values), which is near
+the information-theoretic minimum. Ludo supports dynamic insertions and deletions
+with low amortized cost.  Outback uses Ludo seed arrays to resolve the hash
+function parameter for a query key before issuing the RDMA READ.
+Published in \emph{ACM SIGMETRICS / POMACS 2020}.
+
+\textbf{YCSB}~\cite{ycsb} (\emph{Yahoo! Cloud Serving Benchmark}) is the
+standard benchmark suite used throughout this report~\cite{ycsb}. The six
+workloads (A--F) span read-heavy, write-heavy, and scan-heavy access patterns,
+and are parameterized by key distribution (uniform, Zipfian) and operation mix.
+All throughput and latency figures in this report use 50\,M key-value pairs with
+a 10\,M key working set under Zipfian distribution.
+Published in \emph{ACM SoCC 2010}.
+
+% ──────────────────────────────────────────────────────────────────────────────
+\subsection{CXL Memory Disaggregation}
+% ──────────────────────────────────────────────────────────────────────────────
+
+\textbf{Compute Express Link (CXL)}~\cite{cxl} is an open interconnect standard
+built on PCIe that provides cache-coherent, load/store-accessible remote memory.
+CXL.mem enables host CPUs to access remote memory at 150--300\,ns latency ---
+10--20$\times$ lower than RDMA's typical 2--5\,$\mu$s round-trip.  CXL~3.0
+extends the standard to support multi-node memory pooling.  In this work, CXL.mem
+semantics are emulated via NUMA inter-socket shared memory on a dual-socket
+CloudLab c6420 machine, where cross-socket UPI latency ($\sim$100--200\,ns)
+provides a faithful proxy.
+
+% ══════════════════════════════════════════════════════════════════════════════
 \section{Discussion}
 % ══════════════════════════════════════════════════════════════════════════════
 
@@ -2259,5 +2397,78 @@ sudo numactl \
   --mem_threads=1 --coros=2 \
   --workloads=ycsbc
 \end{lstlisting}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\begin{thebibliography}{99}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\bibitem{outback}
+Y.~Liu, M.~Xie, S.~Shi, Y.~Xu, H.~Litz, and C.~Qian,
+``Outback: Fast and Communication-efficient Index for Key-Value Store on
+  Disaggregated Memory,''
+\emph{Proc.\ VLDB Endow.}, vol.~18, no.~2, pp.~335--348, 2024.
+DOI:~\href{https://doi.org/10.14778/3705829.3705849}{10.14778/3705829.3705849}.
+(arXiv preprint arXiv:2502.08982.)
+
+\bibitem{race}
+P.~Zuo, J.~Sun, L.~Yang, S.~Zhang, and Y.~Hua,
+``One-Sided {RDMA}-Conscious Extendible Hashing for Disaggregated Memory,''
+in \emph{Proc.\ USENIX Annual Technical Conference (ATC)}, 2021, pp.~15--29.
+
+\bibitem{mica}
+H.~Lim, D.~Han, D.~G.~Andersen, and M.~Kaminsky,
+``{MICA}: A Holistic Approach to Fast In-Memory Key-Value Storage,''
+in \emph{Proc.\ 11th USENIX Symposium on Networked Systems Design and
+  Implementation (NSDI)}, 2014, pp.~239--255.
+
+\bibitem{fasst}
+A.~Kalia, M.~Kaminsky, and D.~G.~Andersen,
+``{FaSST}: Fast, Scalable and Simple Distributed Transactions with
+  Two-Sided {(RDMA)} Datagram {RPCs},''
+in \emph{Proc.\ 12th USENIX Symposium on Operating Systems Design and
+  Implementation (OSDI)}, 2016, pp.~185--201.
+
+\bibitem{drtmr}
+X.~Wei, J.~Shi, Y.~Chen, R.~Chen, and H.~Chen,
+``Fast In-Memory Transaction Processing Using {RDMA} and {HTM},''
+in \emph{Proc.\ 25th ACM Symposium on Operating Systems Principles (SOSP)},
+  2015, pp.~87--104.
+DOI:~\href{https://doi.org/10.1145/2815400.2815419}{10.1145/2815400.2815419}.
+
+\bibitem{drtmh}
+X.~Wei, Z.~Dong, R.~Chen, and H.~Chen,
+``Deconstructing {RDMA}-enabled Distributed Transactions: Hybrid is Better!''
+in \emph{Proc.\ 13th USENIX Symposium on Operating Systems Design and
+  Implementation (OSDI)}, 2018, pp.~233--251.
+
+\bibitem{rolex}
+P.~Li, Y.~Hua, P.~Zuo, Z.~Chen, and J.~Sheng,
+``{ROLEX}: A Scalable {RDMA}-oriented Learned Key-Value Store for
+  Disaggregated Memory Systems,''
+in \emph{Proc.\ 21st USENIX Conference on File and Storage Technologies
+  (FAST)}, 2023, pp.~99--114.
+
+\bibitem{ludo}
+S.~Shi and C.~Qian,
+``Ludo Hashing: Compact, Fast, and Dynamic Key-Value Lookups for
+  Practical Network Systems,''
+\emph{Proc.\ ACM Meas.\ Anal.\ Comput.\ Syst.\ (SIGMETRICS)}, vol.~4, no.~2,
+  article 34, 2020.
+DOI:~\href{https://doi.org/10.1145/3392140}{10.1145/3392140}.
+
+\bibitem{ycsb}
+B.~F.~Cooper, A.~Silberstein, E.~Tam, R.~Ramakrishnan, and R.~Sears,
+``Benchmarking Cloud Serving Systems with {YCSB},''
+in \emph{Proc.\ 1st ACM Symposium on Cloud Computing (SoCC)}, 2010,
+  pp.~143--154.
+DOI:~\href{https://doi.org/10.1145/1807128.1807152}{10.1145/1807128.1807152}.
+
+\bibitem{cxl}
+{CXL Consortium},
+``Compute Express Link Specification, Revision 3.0,''
+\emph{CXL Consortium White Paper}, 2022.
+Available: \url{https://www.computeexpresslink.org/}.
+
+\end{thebibliography}
 
 \end{document}

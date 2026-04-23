@@ -16,6 +16,27 @@ Sweep ranges:
 - Coroutines: 1, 2, 3
 - Run length: 120 s per cell
 
+## RDMA plotting convention (Slides + Final Report)
+
+As of 2026-04-21, RDMA reproduction curves in `docs/Slides.tex` and
+`docs/Final_Report.tex` are plotted as two explicit topology series per
+workload (not a merged line):
+
+- 1CN series: 1 MN + 1 CN, filled markers, threads {1,2,4,8,16}
+- 2CN series: 1 MN + 2 CN, hollow markers, threads {4,8,16,32}
+- Same color = same workload across 1CN/2CN/Fig.9/Fig.10
+- Paper references: Fig.9 uses dashed lines; Fig.10 uses dotted lines
+
+Canonical coordinates from `results/experiment_results.csv` (coro=2):
+
+| Workload | 1CN points (T,MOPS) | 2CN points (T,MOPS) |
+|---|---|---|
+| C | (1,0.724) (2,1.411) (4,2.770) (8,4.503) (16,4.325) | (4,2.802) (8,4.269) (16,4.833) (32,5.040) |
+| B | (1,0.731) (2,1.451) (4,2.836) (8,3.722) (16,4.091) | (4,2.777) (8,4.043) (16,4.461) (32,4.439) |
+| A | (1,0.740) (2,1.471) (4,2.746) (8,3.632) (16,3.783) | (4,2.709) (8,3.649) (16,3.873) (32,4.049) |
+| D | (1,0.744) (2,1.460) (4,2.699) (8,3.832) (16,3.900) | (4,2.720) (8,3.982) (16,4.229) (32,4.281) |
+| F | (1,0.626) (2,1.194) (4,1.939) (8,2.213) (16,2.370) | (4,1.926) (8,2.157) (16,2.501) (32,2.354) |
+
 ## `results/dataset_experiment_results.csv`
 
 **Source:** `run_experiments_datasets.sh`
