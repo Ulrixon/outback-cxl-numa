@@ -58,9 +58,9 @@ CN_HOSTS=(
     "apt181.apt.emulab.net"   # cn7
 )
 
-# MN's InfiniBand IP address (IPoIB, used in --server_addr on clients)
-# Find with: ssh $MN_HOST "ip addr show ib0"  (or ib1)
-# TODO: fill in after running: ssh Cheng@apt173.apt.emulab.net "ip addr show ib0"
+# MN's address used in --server_addr on clients (TCP control path only, for QP exchange).
+# IPoIB IP routing is broken on this cluster; use management hostname instead.
+# The RDMA UD data path uses raw IB fabric (LID-based), not IPoIB.
 MN_IB_ADDR="10.10.1.1"
 SERVER_PORT=8888
 
@@ -133,7 +133,8 @@ ssh_bg() {
     local host="$1"
     local logfile="$2"
     shift 2
-    ssh -o StrictHostKeyChecking=no \
+    ssh -n \
+        -o StrictHostKeyChecking=no \
         -o BatchMode=yes \
         -o ConnectTimeout=15 \
         "${SSH_USER}@${host}" \
