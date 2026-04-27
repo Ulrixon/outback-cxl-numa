@@ -276,6 +276,7 @@ run_experiment() {
         local cn_host="${CN_HOSTS[$i]}"
         local logfile="${LOG_DIR}/client_cn${i}_${tag}.log"
         client_logs+=("${logfile}")
+        local start_threads=$(( i * threads_per_cn ))
 
         ssh_bg "${cn_host}" "${logfile}" \
             "sudo taskset -c ${core_spec} \
@@ -287,7 +288,8 @@ run_experiment() {
              --seconds=${EXP_SECONDS} \
              --nkeys=${nkeys} \
              --bench_nkeys=${BENCH_NKEYS} \
-             --workloads=${workload}"
+             --workloads=${workload} \
+             --start_threads=${start_threads}"
         client_pids+=("${_LAST_BG_PID}")
     done
 
