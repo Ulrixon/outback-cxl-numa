@@ -123,8 +123,12 @@ log() { echo "[$(date +%H:%M:%S)] $*"; }
 # ─────────────────────────────────────────────────────────────
 # HELPER: run a command on a remote host in the background.
 # Redirects all output (stdout+stderr) to a LOCAL logfile.
-# Echoes the PID of the backgrounded SSH process.
+# Sets global _LAST_BG_PID to the SSH process PID (do NOT call
+# this inside $() — that would fork a subshell and make wait()
+# unable to track the child).
 # ─────────────────────────────────────────────────────────────
+_LAST_BG_PID=0
+
 ssh_bg() {
     local host="$1"
     local logfile="$2"
@@ -135,7 +139,7 @@ ssh_bg() {
         "${SSH_USER}@${host}" \
         "cd ${REPO_DIR} && $*" \
         > "${logfile}" 2>&1 &
-    echo $!
+    _LAST_BG_PID=$!
 }
 
 # ─────────────────────────────────────────────────────────────
@@ -157,7 +161,7 @@ ssh_run() {
 #   $2 — mem_threads
 #   $3 — workload string (e.g. "ycsbc")
 #   $4 — nkeys (optional, defaults to $NKEYS)
-# Echoes the SSH background PID.
+# Sets _LAST_BG_PID (via ssh_bg). Do NOT call inside $().
 # ─────────────────────────────────────────────────────────────
 start_server() {
     local logfile="$1"
@@ -273,8 +277,7 @@ run_experiment() {
         local logfile="${LOG_DIR}/client_cn${i}_${tag}.log"
         client_logs+=("${logfile}")
 
-        local pid
-        pid=$(ssh_bg "${cn_host}" "${logfile}" \
+        ssh_bg "${cn_host}" "${logfile}" \
             "sudo taskset -c ${core_spec} \
              ./build/benchs/outback/client \
              --nic_idx=${NIC_IDX} \
@@ -284,8 +287,8 @@ run_experiment() {
              --seconds=${EXP_SECONDS} \
              --nkeys=${nkeys} \
              --bench_nkeys=${BENCH_NKEYS} \
-             --workloads=${workload}")
-        client_pids+=("${pid}")
+             --workloads=${workload}"
+        client_pids+=("${_LAST_BG_PID}")
     done
 
     # ── Wait for all clients to finish ───────────────────────
@@ -382,7 +385,8 @@ run_exp_ycsb() {
         for mt in "${mt_list[@]}"; do
             local srv_log="${LOG_DIR}/server_${workload}_mt${mt}.log"
             local srv_pid
-            srv_pid=$(start_server "${srv_log}" "${mt}" "${workload}")
+            start_server "${srv_log}" "${mt}" "${workload}"
+            srv_pid="${_LAST_BG_PID}"
             wait_for_server "${srv_log}"
 
             for tpc in "${threads_list[@]}"; do
@@ -416,7 +420,8 @@ run_exp_mt() {
     for mt in 1 2 3 4; do
         local srv_log="${LOG_DIR}/server_${workload}_mt${mt}_exp2.log"
         local srv_pid
-        srv_pid=$(start_server "${srv_log}" "${mt}" "${workload}")
+        start_server "${srv_log}" "${mt}" "${workload}"
+        srv_pid="${_LAST_BG_PID}"
         wait_for_server "${srv_log}"
 
         run_experiment \
@@ -448,7 +453,8 @@ run_exp_coro() {
         for coro in 1 2 3; do
             local srv_log="${LOG_DIR}/server_${workload}_mt${mt}_coro${coro}.log"
             local srv_pid
-            srv_pid=$(start_server "${srv_log}" "${mt}" "${workload}")
+            start_server "${srv_log}" "${mt}" "${workload}"
+            srv_pid="${_LAST_BG_PID}"
             wait_for_server "${srv_log}"
 
             for tpc in "${threads_list[@]}"; do
@@ -489,7 +495,8 @@ run_exp_datasets() {
         for mt in 1 2 3; do
             local srv_log="${LOG_DIR}/server_${workload}_mt${mt}_exp4.log"
             local srv_pid
-            srv_pid=$(start_server "${srv_log}" "${mt}" "${workload}")
+            start_server "${srv_log}" "${mt}" "${workload}"
+            srv_pid="${_LAST_BG_PID}"
             wait_for_server "${srv_log}"
 
             for tpc in "${threads_list[@]}"; do
@@ -529,7 +536,8 @@ run_exp_memory() {
     for nkeys in "${nkeys_list[@]}"; do
         local srv_log="${LOG_DIR}/server_${workload}_nk${nkeys}_mem.log"
         local srv_pid
-        srv_pid=$(start_server "${srv_log}" 1 "${workload}" "${nkeys}")
+        start_server "${srv_log}" 1 "${workload}" "${nkeys}"
+        srv_pid="${_LAST_BG_PID}"
         wait_for_server "${srv_log}"
 
         local logfile="${LOG_DIR}/memory_cn0_nk${nkeys}.log"
