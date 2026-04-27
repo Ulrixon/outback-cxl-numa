@@ -61,7 +61,7 @@ CN_HOSTS=(
 # MN's InfiniBand IP address (IPoIB, used in --server_addr on clients)
 # Find with: ssh $MN_HOST "ip addr show ib0"  (or ib1)
 # TODO: fill in after running: ssh Cheng@apt173.apt.emulab.net "ip addr show ib0"
-MN_IB_ADDR="128.110.96.173"
+MN_IB_ADDR="10.10.1.1"
 SERVER_PORT=8888
 
 # RDMA NIC index (0 = first port; try 1 if ibv_devinfo shows port 2 active)
