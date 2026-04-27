@@ -46,23 +46,34 @@ set -euo pipefail
 # ─────────────────────────────────────────────────────────────
 
 # Hostnames or IPs reachable via SSH (control / management network)
-MN_HOST="mn"
-CN_HOSTS=("cn0" "cn1" "cn2" "cn3" "cn4" "cn5" "cn6" "cn7")
+MN_HOST="apt173.apt.emulab.net"
+CN_HOSTS=(
+    "apt175.apt.emulab.net"   # cn0
+    "apt182.apt.emulab.net"   # cn1
+    "apt185.apt.emulab.net"   # cn2
+    "apt190.apt.emulab.net"   # cn3
+    "apt178.apt.emulab.net"   # cn4
+    "apt180.apt.emulab.net"   # cn5
+    "apt177.apt.emulab.net"   # cn6
+    "apt181.apt.emulab.net"   # cn7
+)
 
 # MN's InfiniBand IP address (IPoIB, used in --server_addr on clients)
 # Find with: ssh $MN_HOST "ip addr show ib0"  (or ib1)
-MN_IB_ADDR="192.168.1.1"
+# TODO: fill in after running: ssh Cheng@apt173.apt.emulab.net "ip addr show ib0"
+MN_IB_ADDR="128.110.96.173"
 SERVER_PORT=8888
 
 # RDMA NIC index (0 = first port; try 1 if ibv_devinfo shows port 2 active)
 NIC_IDX=0
 
 # SSH user (must be the same on all nodes)
-SSH_USER="$(whoami)"
+SSH_USER="Cheng"
 
 # Absolute path to the repo on ALL nodes (must be identical — use NFS or
-# manually copy). Example for CloudLab: /proj/<project>/outback-cxl-numa
-REPO_DIR="/proj/your-project/outback-cxl-numa"
+# manually copy). On APT/Emulab, /proj/<group>/ is NFS-shared across nodes.
+# TODO: replace with your actual project name from the Emulab portal
+REPO_DIR="/proj/cs620426sp-PG0/outback-cxl-numa"
 
 # ─────────────────────────────────────────────────────────────
 # EXPERIMENT PARAMETERS
@@ -319,7 +330,7 @@ run_experiment() {
             [[ ${gt95}  -eq 1 ]] && max_p95="${p95}"
             [[ ${gt99}  -eq 1 ]] && max_p99="${p99}"
             [[ ${gt999} -eq 1 ]] && max_p999="${p999}"
-            (( n_valid++ ))
+            (( ++n_valid ))
         else
             log "      WARNING: CN${i} (${cn_host}) — no valid output. Check ${logfile}"
         fi
@@ -581,7 +592,7 @@ preflight_check() {
                  -o ConnectTimeout=8 \
                  "${SSH_USER}@${host}" "hostname" >/dev/null 2>&1; then
             log "  ERROR: cannot reach ${host}"
-            (( failed++ ))
+            (( ++failed ))
         else
             log "  OK: ${host}"
         fi
@@ -663,7 +674,7 @@ run_setup() {
             log "  [${host}] setup OK"
         else
             log "  [${host}] setup FAILED — check ${LOG_DIR}/setup_${host}.log"
-            (( failed++ ))
+            (( ++failed ))
         fi
     done
 

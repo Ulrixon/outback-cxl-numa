@@ -45,7 +45,7 @@
 
 % ══════════════════════════════════════════════════════════════════════════════
 \begin{frame}{Outline}
-\tableofcontents
+\tableofcontents[hideallsubsections]
 \end{frame}
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -151,7 +151,7 @@ NIC & CX-6, 100\,Gbps & CX-3, 56\,Gbps FDR & CX-3, 56\,Gbps FDR & N/A (load/stor
 CPU & 2$\times$Plat.~8360Y, 36C & E5-2450, 8C/16T & E5-2450, 8C/16T & 2$\times$Gold 6142, 16C \\
 Memory & 256\,GB & 16\,GB & 16\,GB & 384\,GB \\
 Topology & 2 shards: 1\,MN+2\,CN/shard & 1\,MN + 8\,CN & 1\,MN + 2\,CN & 1 node (NUMA) \\
-MN Threads & 1/shard (Fig.~9) & 4 & 1--3 & N/A\,$^\dagger$ \\
+Nodes & 6 (2 shards) & 9 & 3 & 1 \\
 Max CN Threads & 144/shard & 64 (8/node) & 32 (16/node) & 32 (1 socket) \\
 Interconnect & 100\,Gbps IB & 56\,Gbps FDR IB & 56\,Gbps FDR IB & UPI $\sim$150\,ns \\
 \bottomrule
@@ -170,33 +170,6 @@ because the UPI memory bus, not the counter CAS, is the actual bottleneck.
 \small
 \textbf{Our r320 $\equiv$ paper Fig.~10 hardware.} Difference: 3 nodes vs.\ 9; 1--3 MN threads vs.\ 4.\\
 CXL/NUMA eliminates network entirely $\Rightarrow$ dramatically lower latency.
-\end{frame}
-
-% ══════════════════════════════════════════════════════════════════════════════
-\section{CXL/NUMA Implementation}
-% ══════════════════════════════════════════════════════════════════════════════
-
-\begin{frame}{Architectural Changes: RDMA $\to$ CXL/NUMA}
-\centering
-\small
-\begin{tabular}{@{}lll@{}}
-\toprule
-\textbf{Component} & \textbf{RDMA (Original)} & \textbf{CXL/NUMA (This Work)} \\
-\midrule
-Transport & Mellanox NIC, QPs, MRs & POSIX shm + \texttt{numa\_alloc\_onnode} \\
-Execution & R2 coroutine scheduler & Direct pointer dereference \\
-Concurrency & Hardware Queue Pairs & Software allocation lanes \\
-Telemetry & Running-total averages & Lock-free 2D histogram \\
-Lifecycle & Kernel cleans sockets & Signal handler cleanup \\
-Resize & Separate branch; limited & 6-state machine, versioned epochs \\
-\bottomrule
-\end{tabular}
-
-\vspace{10pt}
-\begin{block}{Key insight}
-Coroutine context switch ($\sim$50--100\,ns) $>$ NUMA access latency ($\sim$100--200\,ns)\\
-$\Rightarrow$ Remove all coroutine logic; direct \texttt{numa\_search()} via pointer dereference
-\end{block}
 \end{frame}
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -228,7 +201,7 @@ $\Rightarrow$ Remove all coroutine logic; direct \texttt{numa\_search()} via poi
 \section{RDMA Reproduction Results}
 % ══════════════════════════════════════════════════════════════════════════════
 
-\begin{frame}{RDMA: YCSB Throughput (Paper Figs.~9--10)}
+\begin{frame}{RDMA: YCSB Throughput (Paper Figs.~9--10, Ours: 1\,MN+2\,CN)}
 \begin{columns}[T]
 % ── Left: chart ──────────────────────────────────────────────────────────────
 \column{0.57\textwidth}
@@ -405,6 +378,33 @@ per-MN-thread rate consistent.
   \item Both platforms: same shape
 \end{itemize}
 \end{columns}
+\end{frame}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{CXL/NUMA Implementation}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\begin{frame}{Architectural Changes: RDMA $\to$ CXL/NUMA}
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Component} & \textbf{RDMA (Original)} & \textbf{CXL/NUMA (This Work)} \\
+\midrule
+Transport & Mellanox NIC, QPs, MRs & POSIX shm + \texttt{numa\_alloc\_onnode} \\
+Execution & R2 coroutine scheduler & Direct pointer dereference \\
+Concurrency & Hardware Queue Pairs & Software allocation lanes \\
+Telemetry & Running-total averages & Lock-free 2D histogram \\
+Lifecycle & Kernel cleans sockets & Signal handler cleanup \\
+Resize & Separate branch; limited & 6-state machine, versioned epochs \\
+\bottomrule
+\end{tabular}
+
+\vspace{10pt}
+\begin{block}{Key insight}
+Coroutine context switch ($\sim$50--100\,ns) $>$ NUMA access latency ($\sim$100--200\,ns)\\
+$\Rightarrow$ Remove all coroutine logic; direct \texttt{numa\_search()} via pointer dereference
+\end{block}
 \end{frame}
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -998,24 +998,20 @@ Code completeness & Implied & Separate resize branch; broken zipfian; no YCSB-E 
 
 % ──────────────────────────────────────────────────────────────────────────────
 \begin{frame}{Conclusion}
-\begin{block}{Reproduction}
-RDMA reproduction on r320 (same hardware class as paper Fig.~10) \textbf{confirms} per-MN-thread throughput trends but reveals:\\
-undisclosed memory overhead, write degradation, codebase incompleteness.
+\begin{block}{RDMA Reproduction (r320 / CX-3, 8\,CN $\times$ 8\,T)}
+\begin{itemize}\setlength{\itemsep}{1pt}
+  \item \textbf{Throughput:} 5.04\,MOPS peak (CX-3, 1\,MN+2\,CN, 32T) vs.\ paper's 6.01\,MOPS (CX-6, 9-node) — \textbf{84\%} of claimed; saturates at $\sim$5\,MOPS (MN-thread bound)
+  \item \textbf{Memory:} DMPH index \textbf{16.87\,MB} (vs.\ claimed 12.5\,MB, $+35\%$); process RSS \textbf{915.8\,MB} — never reported in paper
+  \item \textbf{Writes:} YCSB-F throughput degrades at 32\,T; paper omits this regime
+  \item \textbf{Resize:} \textbf{45\%} throughput drop (vs.\ paper's $\sim$52\%) — consistent trend but separate undocumented branch required
+  \item \textbf{Codebase gaps:} broken Zipfian generator; no YCSB-E implementation
+\end{itemize}
 \end{block}
 
 \begin{block}{CXL Extension}
 CXL/NUMA port achieves \textbf{118\,MOPS} (23$\times$ RDMA) with \textbf{0.14\,$\mu$s} latency (21$\times$ lower).\\
 Near-linear scaling with no NIC bottleneck demonstrates CXL is a fundamentally\\
 superior transport for DMPH-indexed KV stores.
-\end{block}
-
-\begin{block}{Next Steps}
-\begin{itemize}\setlength{\itemsep}{0pt}
-  \item Validate on real CXL hardware (Samsung CXL memory expander)
-  \item Explore multi-node CXL pooling (CXL~3.0)
-  \item Reproduce paper's baselines (RACE, MICA) for direct ratio verification
-  \item Write-heavy optimizations (software write-combining for YCSB-F)
-\end{itemize}
 \end{block}
 \end{frame}
 
