@@ -82,13 +82,13 @@ REPO_DIR="/proj/cs620426sp-PG0/outback-cxl-numa"
 NKEYS=50000000        # 50 M KV pairs (paper default)
 BENCH_NKEYS=10000000  # 10 M key working set for YCSB operations
 EXP_SECONDS=120       # client measurement window (seconds)
-SERVER_SECONDS=800    # server lifetime per invocation (>EXP_SECONDS)
+SERVER_SECONDS=1200   # server lifetime per invocation (>warmup+EXP_SECONDS)
 
 # Seconds to wait after launching the server before starting clients.
 # The server must build the DMPH index (Ludo table) for NKEYS before
-# accepting connections.  At 50 M keys on an r320, this takes ~45–90 s.
+# accepting connections.  At 50 M keys on an r320, this takes ~90–240 s.
 # If clients time out during the experiment, increase this value.
-SERVER_WARMUP_SECS=75
+SERVER_WARMUP_SECS=300
 
 DEFAULT_COROS=2
 DEFAULT_MEM_THREADS=1
@@ -192,7 +192,7 @@ wait_for_server() {
     local logfile="$1"
     local max_poll="${SERVER_WARMUP_SECS}"
 
-    log -n "  [MN] Waiting for server ready (up to ${max_poll}s)..."
+    echo -n "[$(date +%H:%M:%S)]   [MN] Waiting for server ready (up to ${max_poll}s)..."
     for (( i=1; i<=max_poll; i++ )); do
         # These patterns cover common R2/Outback server startup messages.
         # If your binary prints something different, extend the regex.
@@ -207,7 +207,7 @@ wait_for_server() {
     done
     echo " no ready marker after ${max_poll}s — proceeding (server may still be building)"
     # Give the server a generous extra buffer in case the marker was missed
-    sleep 20
+    sleep 60
 }
 
 # ─────────────────────────────────────────────────────────────
