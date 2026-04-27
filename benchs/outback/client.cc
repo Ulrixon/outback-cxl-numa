@@ -169,10 +169,10 @@ void* rolex_client_worker(void* param) {
         LOG(2) << "Thread " << thread_id << " connect to remote server";
         break;
       }
-      if (t.passed_sec() >= 30) {
+      if (t.passed_sec() >= 60) {
         ASSERT(false) << "conn failed at thread:" << thread_id;
       }
-    } while (t.passed_sec() < 10);
+    } while (t.passed_sec() < 60);
   }
 
   /**

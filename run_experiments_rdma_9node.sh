@@ -204,7 +204,7 @@ wait_for_server() {
             "memory node started|server ready|ludo.*finished|registered.*memory|MR registered|accept connect" \
             "${logfile}" 2>/dev/null; then
             echo " ready at ${i}s"
-            sleep 3   # brief extra pause for QP setup
+            sleep 20  # wait for server workers to register QPs
             return 0
         fi
         sleep 1
