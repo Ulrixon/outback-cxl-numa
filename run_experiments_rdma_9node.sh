@@ -269,6 +269,16 @@ run_experiment() {
 
     log "    → ${desc} | ${workload} | ${n_cn}CN × ${threads_per_cn}T = ${total_threads}T total | MT=${mem_threads} C=${coros}"
 
+    # ── Kill any stray client processes from prior experiments ──
+    # Without the exit(0) fix, old clients may be orphaned on the CNs,
+    # holding RDMA QPs/ports and causing new clients to fail to connect.
+    for (( i=0; i<n_cn; i++ )); do
+        ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
+            "${SSH_USER}@${CN_HOSTS[$i]}" \
+            "sudo pkill -9 -f 'benchs/outback/client' 2>/dev/null; true" &
+    done
+    wait  # wait for all cleanup SSHs to finish
+
     # ── Launch all n_cn clients in parallel ──────────────────
     local client_pids=()
     local client_logs=()
