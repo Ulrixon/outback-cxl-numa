@@ -316,13 +316,16 @@ run_experiment() {
 
         # client.cc prints: "[micro] Throughput(op/s): 384555"
         # Convert ops/s -> MOPs by dividing by 1e6
+        # NOTE: '|| true' is required — with set -o pipefail, grep returning
+        # exit code 1 (no matches, e.g. when a CN crashed) would kill the
+        # entire script without it.
         local raw_ops
-        raw_ops=$(grep "\[micro\] Throughput(op/s):" "${logfile}" 2>/dev/null | awk '{print $NF}' | tail -1)
+        raw_ops=$(grep "\[micro\] Throughput(op/s):" "${logfile}" 2>/dev/null | awk '{print $NF}' | tail -1 || true)
         tput=$(awk "BEGIN{printf \"%.3f\", ${raw_ops:-0}/1000000}")
         maxt="${tput}"
         mint="${tput}"
         # client.cc also prints per-second latency: "[micro] >>> sec N throughput: X, latency: Y us"
-        lat=$(grep "\[micro\] >>> sec" "${logfile}" 2>/dev/null | awk -F'latency: ' '{print $2}' | awk '{print $1}' | awk '{s+=$1;n++} END{if(n>0) printf "%.3f", s/n}')
+        lat=$(grep "\[micro\] >>> sec" "${logfile}" 2>/dev/null | awk -F'latency: ' '{print $2}' | awk '{print $1}' | awk '{s+=$1;n++} END{if(n>0) printf "%.3f", s/n}' || true)
         p95="N/A"
         p99="N/A"
         p999="N/A"
