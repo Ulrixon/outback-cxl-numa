@@ -24,7 +24,7 @@ if [ "$download" == "1" ]; then
     fi
 fi
 
-mkdir build
+mkdir -p build
 cd build
-cmake .. && make -j
+cmake .. && make client server -j$(nproc)
 
