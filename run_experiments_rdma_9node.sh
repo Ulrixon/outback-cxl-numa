@@ -334,9 +334,11 @@ run_experiment() {
             sum_lat=$(awk "BEGIN{printf \"%.3f\", ${sum_lat}+${lat:-0}}")
 
             local gt95=0 gt99=0 gt999=0
-            [[ -n "${p95:-}"  ]] && gt95=$(awk  "BEGIN{print (${p95}>=${max_p95})?1:0}")
-            [[ -n "${p99:-}"  ]] && gt99=$(awk  "BEGIN{print (${p99}>=${max_p99})?1:0}")
-            [[ -n "${p999:-}" ]] && gt999=$(awk "BEGIN{print (${p999}>=${max_p999})?1:0}")
+            # Use numeric check to avoid awk crash when p95/p99/p999="N/A"
+            # (awk treats N/A as 0/0 → fatal division by zero → set -e kills script)
+            [[ "${p95}"  =~ ^[0-9] ]] && gt95=$(awk  "BEGIN{print (${p95}>=${max_p95})?1:0}")
+            [[ "${p99}"  =~ ^[0-9] ]] && gt99=$(awk  "BEGIN{print (${p99}>=${max_p99})?1:0}")
+            [[ "${p999}" =~ ^[0-9] ]] && gt999=$(awk "BEGIN{print (${p999}>=${max_p999})?1:0}")
             [[ ${gt95}  -eq 1 ]] && max_p95="${p95}"
             [[ ${gt99}  -eq 1 ]] && max_p99="${p99}"
             [[ ${gt999} -eq 1 ]] && max_p999="${p999}"
