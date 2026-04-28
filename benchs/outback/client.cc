@@ -118,28 +118,19 @@ void run_benchmark(size_t sec) {
     LOG(2)<<"[micro] >>> sec " << current_sec << " throughput: " << tput << ", latency: " << tlat/tput << "us";
     ++current_sec;
   }
-  
+
   running = false;
-  // Use timed join (5s) then pthread_cancel so that threads stuck inside
-  // a blocking RDMA call (server dead → no reply → D-state) don't prevent
-  // the process from exiting.  Without this the client hangs forever after
-  // the measurement window ends if the server has crashed.
-  void *status;
-  for (size_t i = 0; i < BenConfig.threads; i++) {
-    struct timespec ts;
-    clock_gettime(CLOCK_REALTIME, &ts);
-    ts.tv_sec += 5;
-    int rc = pthread_timedjoin_np(threads[i], &status, &ts);
-    if (rc != 0) {
-      pthread_cancel(threads[i]);
-      pthread_join(threads[i], &status);
-    }
-  }
+  // Compute throughput from already-collected data — do NOT pthread_join.
+  // Worker threads are stuck inside RDMA calls (waiting for server reply);
+  // they are in uninterruptible kernel sleep (D-state) and cannot be woken
+  // by SIGKILL, pthread_cancel, or pthread_join.  We have all the data we
+  // need already in thread_params, so just print and exit immediately.
   size_t throughput = 0;
   for (auto &p : thread_params) {
     throughput += p.throughput;
   }
   LOG(2)<<"[micro] Throughput(op/s): " << throughput / sec;
+  exit(0);  // force exit — threads in D-state cannot be joined
 }
 
 void* rolex_client_worker(void* param) {
