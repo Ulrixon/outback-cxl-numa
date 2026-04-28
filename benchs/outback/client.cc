@@ -120,10 +120,20 @@ void run_benchmark(size_t sec) {
   }
   
   running = false;
+  // Use timed join (5s) then pthread_cancel so that threads stuck inside
+  // a blocking RDMA call (server dead → no reply → D-state) don't prevent
+  // the process from exiting.  Without this the client hangs forever after
+  // the measurement window ends if the server has crashed.
   void *status;
   for (size_t i = 0; i < BenConfig.threads; i++) {
-    int rc = pthread_join(threads[i], &status);
-    ASSERT (!rc) "Error:unable to join," << rc;
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += 5;
+    int rc = pthread_timedjoin_np(threads[i], &status, &ts);
+    if (rc != 0) {
+      pthread_cancel(threads[i]);
+      pthread_join(threads[i], &status);
+    }
   }
   size_t throughput = 0;
   for (auto &p : thread_params) {

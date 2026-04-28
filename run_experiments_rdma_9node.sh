@@ -294,9 +294,25 @@ run_experiment() {
         client_pids+=("${_LAST_BG_PID}")
     done
 
-    # ── Wait for all clients to finish ───────────────────────
+    # ── Wait for all clients to finish (with timeout) ────────
+    # EXP_SECONDS + 300s buffer. If clients are still alive after that
+    # (e.g. stuck in D-state because the server died), force-kill the SSH
+    # wrapper processes so the script can move on instead of hanging forever.
+    local client_deadline=$(( $(date +%s) + EXP_SECONDS + 300 ))
+    while [[ $(date +%s) -lt ${client_deadline} ]]; do
+        local all_done=1
+        for pid in "${client_pids[@]}"; do
+            if kill -0 "${pid}" 2>/dev/null; then
+                all_done=0
+                break
+            fi
+        done
+        [[ ${all_done} -eq 1 ]] && break
+        sleep 5
+    done
+    # Force-kill any SSH wrapper processes still alive after the deadline
     for pid in "${client_pids[@]}"; do
-        wait "${pid}" 2>/dev/null || true
+        kill -9 "${pid}" 2>/dev/null || true
     done
 
     # ── Aggregate metrics across all CN logs ─────────────────
