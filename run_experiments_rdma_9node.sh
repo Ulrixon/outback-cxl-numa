@@ -310,9 +310,13 @@ run_experiment() {
         [[ ${all_done} -eq 1 ]] && break
         sleep 5
     done
-    # Force-kill any SSH wrapper processes still alive after the deadline
+    # Force-kill any SSH wrapper processes still alive after the deadline,
+    # then wait on them to reap zombies and clear the job table.
     for pid in "${client_pids[@]}"; do
-        kill -9 "${pid}" 2>/dev/null || true
+        if kill -0 "${pid}" 2>/dev/null; then
+            kill -9 "${pid}" 2>/dev/null || true
+            wait "${pid}" 2>/dev/null || true
+        fi
     done
 
     # ── Aggregate metrics across all CN logs ─────────────────
