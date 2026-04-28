@@ -169,10 +169,11 @@ void* rolex_client_worker(void* param) {
         LOG(2) << "Thread " << thread_id << " connect to remote server";
         break;
       }
-      if (t.passed_sec() >= 60) {
-        ASSERT(false) << "conn failed at thread:" << thread_id;
-      }
     } while (t.passed_sec() < 60);
+    // Always assert after the loop — avoids a race where the timer slips
+    // past 60s between the inner check and the while condition, causing
+    // the loop to exit with session==nullptr and crash at get_connect_data().
+    ASSERT(sender.session != nullptr) << "conn failed at thread:" << thread_id;
   }
 
   /**
