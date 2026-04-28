@@ -205,7 +205,7 @@ wait_for_server() {
             "memory node started|server ready|ludo.*finished|registered.*memory|MR registered|accept connect" \
             "${logfile}" 2>/dev/null; then
             echo " ready at ${i}s"
-            sleep 20  # wait for server workers to register QPs
+            sleep 60  # wait for server workers to register QPs (64MB ibv_reg_mr can be slow)
             return 0
         fi
         sleep 1
@@ -314,16 +314,20 @@ run_experiment() {
         local cn_host="${CN_HOSTS[$i]}"
         local tput maxt mint lat p95 p99 p999
 
-        # Parse the same output fields that run_experiments.sh uses
-        tput=$(grep  "Mean Throughput(MOPs)" "${logfile}" 2>/dev/null | awk '{print $NF}' | tail -1)
-        maxt=$(grep  "Max Throughput(MOPs)"  "${logfile}" 2>/dev/null | awk '{print $NF}' | tail -1)
-        mint=$(grep  "Min Throughput(MOPs)"  "${logfile}" 2>/dev/null | awk '{print $NF}' | tail -1)
-        lat=$(  grep "Mean Latency(us)"       "${logfile}" 2>/dev/null | awk '{print $NF}' | tail -1)
-        p95=$(  grep "Tail Latency P95(us)"   "${logfile}" 2>/dev/null | awk '{print $NF}' | tail -1)
-        p99=$(  grep "Tail Latency P99(us)"   "${logfile}" 2>/dev/null | awk '{print $NF}' | tail -1)
-        p999=$( grep "Tail Latency P999(us)"  "${logfile}" 2>/dev/null | awk '{print $NF}' | tail -1)
+        # client.cc prints: "[micro] Throughput(op/s): 384555"
+        # Convert ops/s -> MOPs by dividing by 1e6
+        local raw_ops
+        raw_ops=$(grep "\[micro\] Throughput(op/s):" "${logfile}" 2>/dev/null | awk '{print $NF}' | tail -1)
+        tput=$(awk "BEGIN{printf \"%.3f\", ${raw_ops:-0}/1000000}")
+        maxt="${tput}"
+        mint="${tput}"
+        # client.cc also prints per-second latency: "[micro] >>> sec N throughput: X, latency: Y us"
+        lat=$(grep "\[micro\] >>> sec" "${logfile}" 2>/dev/null | awk -F'latency: ' '{print $2}' | awk '{print $1}' | awk '{s+=$1;n++} END{if(n>0) printf "%.3f", s/n}')
+        p95="N/A"
+        p99="N/A"
+        p999="N/A"
 
-        if [[ -n "${tput:-}" && "${tput}" != "0" ]]; then
+        if [[ -n "${raw_ops:-}" && "${raw_ops}" != "0" ]]; then
             total_tput=$(awk "BEGIN{printf \"%.3f\", ${total_tput}+${tput}}")
             sum_max_tput=$(awk "BEGIN{printf \"%.3f\", ${sum_max_tput}+${maxt:-0}}")
             sum_min_tput=$(awk "BEGIN{printf \"%.3f\", ${sum_min_tput}+${mint:-0}}")
