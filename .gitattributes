@@ -1,0 +1,10 @@
+# Always use LF line endings for shell scripts and source files
+*.sh        text eol=lf
+*.cc        text eol=lf
+*.hh        text eol=lf
+*.h         text eol=lf
+*.hpp       text eol=lf
+*.c         text eol=lf
+*.tex       text eol=lf
+*.cmake     text eol=lf
+CMakeLists.txt text eol=lf
