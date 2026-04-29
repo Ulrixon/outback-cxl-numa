@@ -272,12 +272,18 @@ run_experiment() {
     # ── Kill any stray client processes from prior experiments ──
     # Without the exit(0) fix, old clients may be orphaned on the CNs,
     # holding RDMA QPs/ports and causing new clients to fail to connect.
+    # IMPORTANT: collect PIDs explicitly — bare `wait` would also wait for
+    # the server SSH background job and block for SERVER_SECONDS (~1200s).
+    local cleanup_pids=()
     for (( i=0; i<n_cn; i++ )); do
         ssh -n -o BatchMode=yes -o ConnectTimeout=10 \
             "${SSH_USER}@${CN_HOSTS[$i]}" \
             "sudo pkill -9 -f 'benchs/outback/client' 2>/dev/null; true" &
+        cleanup_pids+=($!)
     done
-    wait  # wait for all cleanup SSHs to finish
+    for _cpid in "${cleanup_pids[@]}"; do
+        wait "${_cpid}" 2>/dev/null || true
+    done
 
     # ── Launch all n_cn clients in parallel ──────────────────
     local client_pids=()
