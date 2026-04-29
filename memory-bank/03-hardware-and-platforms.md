@@ -71,6 +71,21 @@ Differences from our setup are only **scale**, not hardware:
 | MN threads | 4 (on the single MN node) | 1 |
 | Max CN threads | 64 (8 CN x 8 threads/CN) | 32 (2 CN x 16 threads/CN) |
 
+## Current `tab:setup-diff` in Final_Report.tex (5-column comparison)
+
+As of 2026-04-28, `tab:setup-diff` has **5 platform columns**: Paper (r650, Fig.9) / Paper (r320, Fig.10) / RDMA (ours) / CXL (c6420) / Expected Impact.
+The three verbose per-platform setup tables (tab:paper-setup, tab:rdma-setup, tab:numa-setup) were removed from §III; full specs moved to Appendix A (`\label{app:hw}`).
+
+| Factor | Paper r650 | Paper r320 | RDMA ours | CXL c6420 | Expected Impact |
+|---|---|---|---|---|---|
+| NIC | CX-6 100 Gbps | CX-3 56 Gbps FDR | CX-3 56 Gbps FDR | N/A (load/store) | Like-for-like vs. Fig.10; 2× lower vs. Fig.9 |
+| CPU | Platinum 8360Y 2×36C | E5-2450 8C | E5-2450 8C | Gold 6142 2×16C | RDMA CPU identical to Fig.10 |
+| Max threads | 144/shard | 64 (8/node) | 32 (2×16) | 32 (1 socket) | Cannot test Fig.9 high-thread regime |
+| MN threads | 1–3 (2 shards) | 4 | 1–3 | none (no MN CPU) | RDMA MN count matches Fig.10 |
+| Node count | 6 (2 shards×3) | Up to 9 | 3 | 1 | Fewer CN; lower aggregate throughput |
+| Memory | 256 GB | 16 GB DDR3 | 16 GB DDR3 | 384 GB DDR4 | RDMA OOM at 80M (same as Fig.10) |
+| Interconnect | PCIe/IB FDR | IB FDR | IB FDR | UPI ~150 ns | CXL ~20× lower latency |
+
 ## Forbidden phrasings (do not write these)
 
 - ❌ "Xeon D-1548 / 64 GB / RoCE 10 Gbps" for the RDMA setup

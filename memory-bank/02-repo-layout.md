@@ -4,7 +4,7 @@
 outback-cxl-numa/
 ├── docs/                  # All report/slides assets + reference PDFs + figures
 │   ├── Final_Report.tex   # Main IEEE-style report
-│   ├── Final_Report.pdf   # 18 pages
+│   ├── Final_Report.pdf   # 17 pages total (12 pages main content + appendices A–D)
 │   ├── Final_Report_backup.tex  / _old.tex   # Historical snapshots
 │   ├── Slides.tex         # Beamer (Madrid) deck
 │   ├── Slides.pdf         # 27 pages

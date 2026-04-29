@@ -4,7 +4,40 @@ Append new entries **at the top**. Use ISO date + one-line summary + bullets.
 
 ---
 
-## 2026-04-21 — Topology corrections + RDMA plot split (1CN vs 2CN)
+## 2026-04-28 — Final_Report.tex compaction + structure overhaul
+
+### Page-count reduction (16 → 12 pages main content)
+- Moved all 23 main-body data tables to **Appendix D** (`\label{app:tables}`):
+  - §4 RDMA: tabs rdma-ycsbc/b/a/d/f, paper-fig9, paper-fig10, rdma-coro-1cn/2cn, rdma-memthreads, rdma-mt2-coro, rdma-fb, rdma-osm, rdma-dataset-extra, rdma-dmph, rdma-rss
+  - §6 CXL: tabs numa-ycsbc, numa-coro, numa-ycsb-all, numa-datasets
+  - §7 Three-way: tabs three-way, paper-fig11, fig16-cmp (table*)
+  - Each table's former main-body location replaced with a one-line sentence referencing `Appendix~\ref{app:tables}`.
+- Moved §8 **Literature Review** to main body **§II** (after Introduction) — see below.
+- Condensed prose sections: §3.1 RDMA Setup Challenges (5-item list), §5 Stress Tests (single paragraph), §7.5 MN Threads, §7.6 Coroutines, §7.7 Sensitivity Analysis, §7.8 Memory Usage.
+- Removed `tab:scaling` (§7.11) and `tab:discrepancy` (§7.12); replaced with inline summary sentences pointing to `tab:repro-summary`.
+- Condensed §9 Future Work from 6-item bullet list to a single paragraph.
+- Condensed §9.1 Limitations from 6 items to 4 tighter bullets (merged codebase/gap items).
+- Reduced two figure heights (`fig:tput-vs-latency` 8→6.5 cm; `fig:paper-fig16-cmp` subplot 6.5→5.5 cm).
+- Result: **Appendix A now starts page 13** (shared with §9 Conclusion); main content = **12 pages**.
+
+### Document structure changes
+- **§II Literature Review** moved from Appendix E into main body:
+  - Subsections: "The Reproduced Paper: Outback", "Baseline Systems" (condensed to 2 paragraphs), "Key Primitives and CXL Context" (merged algorithms + CXL subsections).
+- **§III Environment Setup** (formerly §II) completely restructured:
+  - Removed three verbose platform-specific tables (tab:paper-setup, tab:rdma-setup, tab:numa-setup).
+  - Now opens with a 1-sentence intro + `tab:setup-diff` as centrepiece.
+  - Added **Paper (r320, Fig. 10)** as a 5th column to `tab:setup-diff` (4 platforms: Paper r650 / Paper r320 / RDMA ours / CXL c6420).
+  - Followed by 5 explanatory paragraphs: NIC BW, cluster scale, memory per node, interconnect latency, CXL emulation caveat.
+  - Full hardware tables moved to Appendix A (`\label{app:hw}`); `\ref{app:hw}` used in text.
+- Added labels `\label{sec:cxl-results}`, `\label{sec:conclusion-limitations}`, `\label{app:hw}` where previously missing.
+
+### Commits (in order)
+1. `compact(report): reduce main content to ~12 pages, move tables to appendix D/E`
+2. `compact(report): reduce main content to 12 pages, move tables/lit-review to appendix D/E`
+3. `report: move lit review to main content (§II); shrink env setup to key diffs table + explanatory text`
+4. `report: add Paper (r320/Fig.10) column to setup comparison table`
+
+
 - Corrected paper hardware/topology claims across docs:
   - Fig.9 reference now uses: 6 nodes total, 2 shards, each shard = 1MN + 2CN,
     2x Xeon Platinum 8360Y (36 cores each), CX-6 100 Gbps, 1 MNT/shard.
