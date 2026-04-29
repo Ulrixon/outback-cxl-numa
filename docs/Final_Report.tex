@@ -74,94 +74,26 @@ This project has two objectives:
 Since dedicated CXL hardware was unavailable, we emulated CXL memory disaggregation using \textbf{NUMA inter-socket memory}. On a dual-socket machine, one NUMA node's memory serves as the ``remote'' Memory Node, while CPUs on the other socket act as Compute Nodes accessing that memory across the inter-socket UPI interconnect. This provides load/store semantics with $\sim$100--200\,ns cross-socket latency --- a reasonable proxy for CXL.mem behavior.
 
 % ══════════════════════════════════════════════════════════════════════════════
+\section{Literature Review}\label{sec:litreview}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection*{The Reproduced Paper: Outback}
+
+\textbf{Outback}~\cite{outback} addresses the \emph{one-sided vs.\ two-sided RDMA dilemma}: one-sided RDMA requires multiple round trips for traditional hash or tree indexes; two-sided RPC resolves the index in one round trip but imposes CPU load on memory nodes. Outback resolves this by splitting the index into (1)~a \emph{compute-heavy, memory-efficient} DMPH seed component (Ludo~\cite{ludo} arrays) cached on compute nodes, and (2)~a \emph{memory-heavy, compute-efficient} Othello bucket-locator on memory nodes accessed with a single one-sided RDMA READ. Evaluated on Mellanox CX-6 100\,Gbps IB, it achieves 1.06--5.03$\times$ over baselines on YCSB. Published in \emph{PVLDB}, vol.\ 18, 2024.
+
+\subsection*{Baseline Systems}
+
+\textbf{RACE}~\cite{race} (\emph{USENIX ATC 2021}) is an extendible hashing index for disaggregated memory using only one-sided RDMA verbs. Outback reports 2.43--5.03$\times$ over RACE on YCSB-A/C. \textbf{MICA}~\cite{mica} (\emph{USENIX NSDI 2014}) is a single-machine KV store with kernel-bypass networking, invoked via two-sided RPC (\textit{RPC-MICA}) in Outback's evaluation (2.47\,MOPS, YCSB-C). \textbf{Cluster RPC} (similar to DrTM+R~\cite{drtmr}) reaches $\sim$5.41\,MOPS at 72 threads via two-sided RPC. \textbf{FaSST}~\cite{fasst} (\emph{OSDI 2016}), \textbf{DrTM+R}~\cite{drtmr} (\emph{OSDI 2018}), and \textbf{ROLEX}~\cite{rolex} (\emph{USENIX FAST 2023}) are included in the codebase but have build-breaking issues that prevented comparison (\S\ref{sec:codebase-issues}).
+
+\subsection*{Key Primitives and CXL Context}
+
+\textbf{Ludo Hashing}~\cite{ludo} (\emph{ACM SIGMETRICS 2020}) achieves $3.76 + 1.05\ell$ bits per KV item (near the information-theoretic minimum) with dynamic insertions; it forms Outback's DMPH seed arrays. \textbf{YCSB}~\cite{ycsb} (\emph{ACM SoCC 2010}) provides workloads A--F (read-heavy to write-heavy); all experiments use 50\,M KV pairs, 10\,M key working set, Zipfian distribution. \textbf{CXL}~\cite{cxl} is an open PCIe-based interconnect providing cache-coherent load/store remote memory at 150--300\,ns; CXL~3.0 supports multi-node pooling. In this work, CXL.mem is emulated via NUMA inter-socket shared memory (UPI $\sim$100--200\,ns).
+
+% ══════════════════════════════════════════════════════════════════════════════
 \section{Environment Setup}
 % ══════════════════════════════════════════════════════════════════════════════
 
-This section describes the three hardware environments compared throughout this report: the original paper's setup, our RDMA reproduction, and our CXL/NUMA extension. Understanding the differences between these platforms is essential for interpreting all subsequent results.
-
-\subsection{Original Paper's Setup}
-
-The Outback paper evaluates on two CloudLab configurations:
-
-\begin{table}[H]
-\centering
-\caption{Original paper hardware configurations}
-\label{tab:paper-setup}
-\scriptsize
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}lll@{}}
-\toprule
-\textbf{Parameter} & \textbf{Primary (r650)} & \textbf{Secondary (r320)} \\
-\midrule
-CPU        & 2$\times$Xeon Platinum 8360Y, 36C/72T, 2.4\,GHz & Xeon E5-2450, 8C/16T, 2.1\,GHz \\
-Memory     & 256\,GB DDR4                              & 16\,GB DDR4 \\
-Network    & ConnectX-6, 100\,Gbps             & ConnectX-3 MX354A, 56\,Gbps FDR \\
-Topology   & 6 nodes: 2 shards, 1\,MN + 2\,CN each & Up to 9 nodes (1\,MN + 8\,CN) \\
-MN Threads & 1/shard (Fig.~9), 1--3 (Fig.~12)    & 4 \\
-Max CN Threads & 144/shard                          & 64 (8/node) \\
-OS         & Not specified                              & Not specified \\
-\bottomrule
-\end{tabular}}
-\end{table}
-
-\subsection{Our RDMA Reproduction Setup}
-
-The CloudLab Apt-cluster \texttt{r320} nodes we secured for the RDMA experiments are equipped with a Mellanox MX354A ConnectX-3 NIC running InfiniBand FDR at 56\,Gbps line rate --- the same hardware class used by the paper's Figure~10 cluster. The node specifications shown in Table~\ref{tab:rdma-setup} are taken from the official CloudLab hardware listing for the \texttt{r320} type and confirmed by \texttt{lscpu}, \texttt{dmidecode -t memory}, and \texttt{ibv\_devinfo} on the assigned nodes.
-
-\begin{table}[H]
-\centering
-\caption{RDMA reproduction: hardware \& configuration (CloudLab Apt \texttt{r320})}
-\label{tab:rdma-setup}
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}ll@{}}
-\toprule
-\textbf{Parameter} & \textbf{Specification} \\
-\midrule
-Platform   & CloudLab Apt, 3$\times$ \texttt{r320} (1\,MN + 2\,CN) \\
-Chassis    & Dell PowerEdge R320 (Sandy Bridge generation) \\
-CPU        & 1$\times$ Intel Xeon E5-2450 @ 2.1\,GHz, 8 cores / 16 threads, 20\,MB L3 \\
-            & (single socket, 1 NUMA node) \\
-Memory     & 16\,GB DDR3 (4$\times$2\,GB RDIMMs @ 1.6\,GHz) per node \\
-NIC (IB)   & 1$\times$ Mellanox MX354A ConnectX-3 dual-port FDR \\
-            & (\texttt{mlx4\_0}), InfiniBand FDR, up to 56\,Gbps; \\
-            & 1$\times$ QSA adapter for 10\,GbE commodity fabric \\
-NIC (1GbE) & Dual-port embedded Broadcom (control network) \\
-Disks      & 4$\times$ 500\,GB 7.2K SATA (RAID5) \\
-OS         & Ubuntu (kernel 5.x with legacy MLNX\_OFED 4.9 stack) \\
-KV Pairs   & 50\,M keys, DMPH load factor = 0.95 \\
-Test Duration & 120 seconds per run \\
-Coroutines & 2 (default); also tested 1, 3 \\
-\bottomrule
-\end{tabular}}
-\end{table}
-
-Note: this hardware exactly matches the CloudLab Apt \texttt{r320} profile used by the paper's Figure~10 cluster (also Apt \texttt{r320}: Xeon E5-2450, 16\,GB DDR3-1600, MX354A FDR CX-3). The difference between our reproduction and the paper's Figure~10 is therefore not in the hardware itself, but in the cluster scale we were able to allocate (3 nodes vs.\ 9 nodes in the paper) and in the MN-thread count (we use 1 MN thread vs.\ the paper's 4 MN threads in Fig.~10).
-
-\subsection{Our CXL/NUMA Extension Setup}
-
-\begin{table}[H]
-\centering
-\caption{CXL/NUMA emulation: hardware \& configuration}
-\label{tab:numa-setup}
-\begin{tabular}{@{}ll@{}}
-\toprule
-\textbf{Parameter} & \textbf{Specification} \\
-\midrule
-Platform     & CloudLab, 1$\times$ c6420 node \\
-CPU          & 2$\times$ Intel Xeon Gold 6142 @ 2.60\,GHz, 16C/32T each \\
-Memory       & 384\,GB DDR4 total (192\,GB per socket) \\
-NUMA Topology & Node\,0 = Compute, Node\,1 = Memory \\
-Interconnect & Intel UPI ($\sim$100--200\,ns cross-socket) \\
-OS           & Ubuntu 22.04 LTS \\
-KV Pairs     & 50\,M keys, DMPH load factor = 0.95 \\
-Test Duration & 120 seconds per run \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\subsection{Setup Differences and Expected Impact}
-
-Table~\ref{tab:setup-diff} summarizes the key differences between the three environments. These differences are critical context for all result comparisons that follow.
+Three hardware environments are compared throughout this report: the original paper's primary cluster (CloudLab \texttt{r650}, CX-6 100\,Gbps), our RDMA reproduction (CloudLab \texttt{r320}, CX-3 56\,Gbps FDR), and our CXL/NUMA extension (CloudLab \texttt{c6420}, dual-socket NUMA as a CXL proxy). Table~\ref{tab:setup-diff} lists the key differences and their expected effect on results; full hardware listings appear in Appendix~\ref{app:hw}.
 
 \begin{table*}[!t]
 \centering
@@ -185,7 +117,15 @@ Interconnect & PCIe / InfiniBand FDR & InfiniBand FDR & UPI $\sim$150\,ns & CXL 
 {\scriptsize $^a$In CXL/NUMA the ``memory node'' is NUMA node~1's DRAM only --- no MN CPU runs. Compute threads on NUMA0 access data via direct \texttt{load}/\texttt{store} over UPI. The \texttt{mem\_threads} parameter is repurposed as \textbf{insert-lane sharding} (partitions the allocation counter to reduce CAS contention); it has no effect on the read path and negligible effect on writes. Measured throughput varies by $<$2\% across 1--3 \texttt{mem\_threads} (\S\ref{sec:repro-mt}).}
 \end{table*}
 
-We expect our RDMA reproduction to show \textbf{lower aggregate throughput} than the paper's CX-6 results because of both the $\sim$2$\times$ slower NIC link (56\,Gbps FDR vs.\ 100\,Gbps CX-6) and the smaller CN count, but \textbf{comparable per-MN-thread throughput} once the MN CPU becomes the bottleneck (since serialization of RPC dispatch on the MN dominates over network bandwidth at small thread counts). Because we use the \emph{same} \texttt{r320} hardware as the paper's Figure~10 cluster, our per-MN-thread comparison against Fig.~10 is a like-for-like measurement. The CXL/NUMA extension should show \textbf{dramatically higher throughput and lower latency} by eliminating the network stack entirely.
+\textbf{Network bandwidth (56 vs.\ 100\,Gbps).} Our RDMA nodes use CX-3 FDR InfiniBand at 56\,Gbps while the paper's primary cluster uses CX-6 at 100\,Gbps. This $\sim$2$\times$ bandwidth gap caps our per-MN aggregate throughput. Because our hardware is identical to the paper's Figure~10 cluster (\texttt{r320}, CX-3 FDR), per-MN-thread comparisons against Fig.~10 are like-for-like; comparisons against Fig.~9 (CX-6) are expected to be proportionally lower.
+
+\textbf{Cluster scale and thread count (3 vs.\ 9 nodes).} We allocated 3 \texttt{r320} nodes (1\,MN + 2\,CN) versus the paper's maximum of 9. Total client-side parallelism is capped at 32 threads, preventing testing of the 64--144 thread regime in the paper's scaling curves.
+
+\textbf{Memory per node (16\,GB vs.\ 256\,GB).} The \texttt{r320}'s 16\,GB DDR3 causes OOM at 80\,M keys once the raw KV array, DMPH index, and pre-registered hugepage MR are all resident simultaneously. All RDMA experiments therefore use 50\,M keys only. The CXL \texttt{c6420} node's 384\,GB accommodates 80\,M with headroom.
+
+\textbf{Interconnect latency (InfiniBand vs.\ NUMA/UPI).} RDMA over InfiniBand incurs $\sim$2--5\,$\mu$s per round trip. The CXL/NUMA path uses Intel UPI inter-socket load/store at $\sim$100--200\,ns --- roughly 20$\times$ lower latency --- eliminating the serialization bottleneck on the memory-node CPU and enabling the near-linear throughput scaling seen in \S\ref{sec:cxl-results}.
+
+\textbf{CXL is emulated, not real hardware.} Real CXL.mem devices (e.g., Samsung CMM-D) exhibit 200--400\,ns latency and are constrained by PCIe bandwidth ($\sim$32\,GB/s for PCIe~5.0 $\times$16). Our NUMA emulation at $\sim$150\,ns with DDR4 bandwidth is an optimistic upper bound; see \S\ref{sec:conclusion-limitations} for implications.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Findings: Build Effort and Issues}
@@ -755,7 +695,7 @@ Code completeness & Implied & Resize on separate branch; broken zipfian; no YCSB
 Beyond the paper's designed operating envelope, two critical memory limits were identified. (1)~\textbf{OOM at 80M keys (RDMA):} The r320's 16\,GB DRAM is insufficient for 80M KV pairs once the raw KV array, DMPH index, and pre-registered RDMA hugepage MR are all resident simultaneously --- the paper tests 80M only on r650 (256\,GB) without disclosing this constraint. (2)~\textbf{Swap thrashing at 60M keys:} At 60M keys with LF=0.80, throughput collapsed from $\sim$4.5\,MOPS to $\sim$2,945\,ops/s ($\sim$9.8\,ms latency) --- a \textbf{1,500$\times$} slowdown from memory swapping. Additional fragility points (write degradation at scale, coroutine overload, CXL resize stalls, range queries) are detailed in Sections~\ref{sec:codebase-issues}, \ref{sec:repro-coro}, \ref{sec:repro-mt}, and the three-way analysis (\S\ref{sec:repro-datasets}).
 
 % ══════════════════════════════════════════════════════════════════════════════
-\section{CXL/NUMA Extension Results}
+\section{CXL/NUMA Extension Results}\label{sec:cxl-results}
 % ══════════════════════════════════════════════════════════════════════════════
 
 This section presents the CXL/NUMA extension results, which go beyond reproducing the paper's RDMA experiments. By eliminating the network stack, we test whether the DMPH index architecture can scale to much higher throughput when the RDMA bottleneck is removed.
@@ -1556,7 +1496,7 @@ This study reproduced Outback's RDMA experiments on nine CloudLab Apt \texttt{r3
 \textbf{Broader implications.} The results suggest that Outback's DMPH indexing strategy is architecturally sound and transport-agnostic: the same index design that enables single-RTT RDMA reads maps directly to single-load CXL accesses, with far better performance characteristics. As CXL.mem devices become commercially available, the disaggregated memory architecture Outback targets will shed the latency and complexity costs of RDMA, rendering the transport layer a bottleneck rather than an enabler. The primary constraint on RDMA-based disaggregation --- per-QP NIC state, hugepage memory registration, and multi-RTT coroutine scheduling --- is entirely absent in the CXL model. Our port demonstrates that this transition requires engineering effort but is structurally straightforward for DMPH-indexed systems.
 
 % ── Limitations ────────────────────────────────────────────────────────────
-\subsection{Limitations}
+\subsection{Limitations}\label{sec:conclusion-limitations}
 
 \begin{itemize}[nosep]
   \item \textbf{NUMA as CXL proxy:} Results use inter-socket DDR4 (NUMA), not real CXL hardware. Real CXL latency is typically 200--400\,ns (vs.\ our 130--150\,ns); PCIe bandwidth caps may further limit throughput.
@@ -1575,7 +1515,7 @@ Key directions include: (1)~validating on real CXL hardware (Samsung CMM-D, Inte
 
 % ══════════════════════════════════════════════════════════════════════════════
 \appendices
-\section{Hardware Specifications}
+\section{Hardware Specifications}\label{app:hw}
 % ══════════════════════════════════════════════════════════════════════════════
 
 \begin{table}[H]
@@ -2287,33 +2227,5 @@ in \emph{Proc.\ 16th USENIX Symposium on Operating Systems Design and
 \end{thebibliography}
 
 % ══════════════════════════════════════════════════════════════════════════════
-\section{Literature Review}\label{app:litreview}
-% ══════════════════════════════════════════════════════════════════════════════
-
-This appendix surveys the systems and techniques directly relevant to this work.
-
-\subsection*{The Reproduced Paper: Outback}
-
-\textbf{Outback}~\cite{outback} addresses the \emph{one-sided vs.\ two-sided RDMA dilemma}: one-sided RDMA requires multiple round trips for traditional hash or tree indexes; two-sided RPC resolves the index in one round trip but imposes CPU load on memory nodes. Outback resolves this by splitting the index into (1)~a \emph{compute-heavy, memory-efficient} DMPH seed component (Ludo~\cite{ludo} arrays) cached on compute nodes, and (2)~a \emph{memory-heavy, compute-efficient} Othello bucket-locator on memory nodes accessed with a single one-sided RDMA READ. Evaluated on Mellanox CX-6 100\,Gbps IB, it achieves 1.06--5.03$\times$ over baselines on YCSB. Published in \emph{PVLDB}, vol.\ 18, 2024.
-
-\subsection*{Baseline Systems}
-
-\textbf{RACE}~\cite{race} (\emph{USENIX ATC 2021}) is an extendible hashing index for disaggregated memory using only one-sided RDMA verbs. Outback reports 2.43--5.03$\times$ over RACE on YCSB-A/C.
-
-\textbf{MICA}~\cite{mica} (\emph{USENIX NSDI 2014}) is a single-machine KV store with kernel-bypass networking. In Outback's evaluation it is invoked via two-sided RPC (\textit{RPC-MICA}), making it the weakest baseline at 2.47\,MOPS (YCSB-C, 72T).
-
-\textbf{Cluster RPC} is a cluster-hash approach (similar to DrTM+R~\cite{drtmr}) via two-sided RPC, reaching $\sim$5.41\,MOPS at 72 threads.
-
-\textbf{FaSST}~\cite{fasst} (\emph{OSDI 2016}), \textbf{DrTM+R}~\cite{drtmr} (\emph{OSDI 2018}), and \textbf{ROLEX}~\cite{rolex} (\emph{USENIX FAST 2023}) are included in the codebase but not plotted in this report's graphs.
-
-\subsection*{Key Algorithmic Primitives}
-
-\textbf{Ludo Hashing}~\cite{ludo} (\emph{ACM SIGMETRICS 2020}) achieves $3.76 + 1.05\ell$ bits per KV item, near the information-theoretic minimum, with dynamic insertions. Used as Outback's DMPH seed arrays.
-
-\textbf{YCSB}~\cite{ycsb} (\emph{ACM SoCC 2010}) provides workloads A--F covering read-heavy to write-heavy patterns. All experiments use 50\,M KV pairs, 10\,M key working set, Zipfian distribution.
-
-\subsection*{CXL Memory Disaggregation}
-
-\textbf{CXL}~\cite{cxl} is an open PCIe-based interconnect providing cache-coherent load/store remote memory at 150--300\,ns. CXL~3.0 supports multi-node pooling. In this work, CXL.mem is emulated via NUMA inter-socket shared memory (UPI latency $\sim$100--200\,ns).
 
 \end{document}
