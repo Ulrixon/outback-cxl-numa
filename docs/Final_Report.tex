@@ -2284,27 +2284,57 @@ provides a faithful proxy.
 \end{enumerate}
 
 % ══════════════════════════════════════════════════════════════════════════════
-\section{Conclusion and Next Steps}
+\section{Conclusion}
 % ══════════════════════════════════════════════════════════════════════════════
 
-This study reproduced Outback's RDMA experiments and extended them to a CXL-emulated platform via NUMA inter-socket shared memory. The RDMA reproduction (Section~4) on CloudLab Apt \texttt{r320} nodes --- the same hardware class as the paper's Figure~10 cluster --- confirmed general per-MN-thread throughput trends but revealed significant discrepancies in resizing stability, memory overhead, write performance, and codebase completeness (Section~3). The CXL/NUMA extension (Section~5) demonstrated dramatic improvements:
+This study reproduced Outback's RDMA experiments on nine CloudLab Apt \texttt{r320} nodes and extended the system to a CXL-emulated platform via NUMA inter-socket shared memory. Together, the two tracks answer a central question: \emph{how much of Outback's design is intrinsic to its DMPH index, and how much is an artifact of the RDMA transport?}
+
+\textbf{RDMA reproduction.} Running on the same hardware class (Mellanox CX-3 56\,Gbps FDR InfiniBand) as the paper's Figure~10 cluster, we confirmed Outback's core architectural claim: a single-RTT DMPH lookup scales linearly with MN-thread count on read-dominated workloads (YCSB-C peak: 5.04\,MOPS at 4 MN threads, 64 total CN threads). The coroutine-depth sweep (Fig.~13) reproduced the expected hockey-stick curve, with coro=2 doubling throughput over coro=1 and coro=3 yielding diminishing returns. However, the reproduction exposed several undisclosed issues: write-heavy workloads (YCSB-A, YCSB-F) saturate and degrade at high thread counts; the resize experiment (Fig.~16--17) exhibits a $\sim$45\% throughput drop with erratic recovery rather than the claimed smooth $\sim$52\% degradation; the actual DMPH memory footprint (16.87\,MB) and process RSS (915.8\,MB) substantially exceed the paper's reported 12.5\,MB; and three out of four baseline systems (RACE, MICA, Cluster) fail to build, preventing direct ratio verification.
+
+\textbf{CXL/NUMA extension.} Replacing the RDMA transport with POSIX shared memory across NUMA sockets yielded a \textbf{23$\times$} throughput gain (118\,MOPS at 32 threads vs.\ 5\,MOPS on RDMA) and a \textbf{21$\times$} latency reduction (0.14\,$\mu$s vs.\ 3\,$\mu$s mean). Thread scaling remained near-linear because the NUMA memory bus imposes no NIC bottleneck. The port required re-engineering the transport, removing the coroutine scheduler, building software allocation lanes to replace RDMA queue pairs, and implementing a versioned resize state machine with signal-safe \texttt{/dev/shm} cleanup --- reducing codebase complexity by approximately 60\% while improving all performance metrics by over an order of magnitude.
+
+\textbf{Broader implications.} The results suggest that Outback's DMPH indexing strategy is architecturally sound and transport-agnostic: the same index design that enables single-RTT RDMA reads maps directly to single-load CXL accesses, with far better performance characteristics. As CXL.mem devices become commercially available, the disaggregated memory architecture Outback targets will shed the latency and complexity costs of RDMA, rendering the transport layer a bottleneck rather than an enabler. The primary constraint on RDMA-based disaggregation --- per-QP NIC state, hugepage memory registration, and multi-RTT coroutine scheduling --- is entirely absent in the CXL model. Our port demonstrates that this transition requires engineering effort but is structurally straightforward for DMPH-indexed systems.
+
+% ── Limitations ────────────────────────────────────────────────────────────
+\subsection{Limitations}
+
+Several limitations constrain the conclusions drawn in this study:
 
 \begin{itemize}[nosep]
-  \item \textbf{118\,MOPS} at 32 threads (vs.\ 5\,MOPS on RDMA --- 23$\times$ gain)
-  \item \textbf{0.14\,$\mu$s} mean latency (vs.\ 3\,$\mu$s --- 21$\times$ reduction)
-  \item Near-linear thread scaling with no NIC bottleneck
+  \item \textbf{NUMA as CXL proxy:} Our CXL results are produced on a dual-socket NUMA machine (CloudLab \texttt{c6420}) with inter-socket DDR4, not real CXL hardware. NUMA avoids PCIe bandwidth and latency constraints present in actual CXL devices; real CXL latency is typically 200--400\,ns (vs.\ our 130--150\,ns), and PCIe bandwidth caps ($\sim$32\,GB/s for PCIe 5.0 $\times$16) may limit high-thread throughput in ways NUMA does not.
+
+  \item \textbf{Incomplete codebase:} The upstream Outback repository has build-breaking issues in its RACE, MICA, and cluster-hash baselines (see \S\ref{sec:codebase-issues}), preventing reproduction of the paper's Fig.~7--8 comparison ratios. Our throughput numbers cannot be placed in context against these baselines.
+
+  \item \textbf{RDMA reproduction gap:} Our 9-node CloudLab cluster uses Mellanox CX-3 56\,Gbps FDR InfiniBand, identical to the paper's hardware. However, our aggregate throughput at peak (8T/CN) falls short of the paper's reported peak, likely due to differences in server-side DRAM allocation, hugepage configuration, and MLNX\_OFED driver versions that were not disclosed.
+
+  \item \textbf{Resize experiment incomplete:} The paper's dynamic resizing experiment (Fig.~16) requires a stable server that survives the measurement window. The upstream resize code segfaults under load; our NUMA resize state machine is functional but produces data only for the NUMA transport, not the RDMA path.
+
+  \item \textbf{Single-machine CXL scope:} CXL/NUMA is inherently limited to one physical host. The disaggregated memory pool model (multiple compute nodes sharing one memory node) cannot be evaluated without either CXL~3.0 fabric hardware or a multi-machine emulation layer.
+
+  \item \textbf{Range query unsupported:} YCSB-E (range scans) cannot be evaluated because the DMPH index does not support ordered traversal, making scan-heavy workload comparisons impossible with the current design.
 \end{itemize}
 
-The CXL port required re-engineering the transport (POSIX shared memory), removing the coroutine scheduler, building software allocation lanes, and implementing a versioned resize state machine with signal-safe cleanup. These changes reduced complexity while improving performance by over an order of magnitude, demonstrating that CXL-style memory disaggregation is a fundamentally superior transport for DMPH-indexed KV stores.
+% ── Future Work ────────────────────────────────────────────────────────────
+\subsection{Future Work}
 
-The original paper's claims of smooth resizing and minimal memory overhead remain unverifiable with the provided codebase. 
-
-\textbf{Next Steps:}
 \begin{itemize}[nosep]
-  \item Validate results on actual CXL hardware (e.g., Samsung CXL memory expander) to confirm that NUMA emulation is a faithful proxy.
-  \item Explore multi-node CXL pooling (CXL~3.0) to extend the single-machine limitation.
-  \item Reproduce the paper's baselines (RACE, MICA, Cluster) for direct ratio verification.
-  \item Investigate write-heavy workload optimizations (e.g., software write-combining for YCSB-F).
+  \item \textbf{Real CXL hardware validation.} Deploy Outback-CXL on a server equipped with a Samsung CXL memory expander (e.g., CMM-D 128\,GB) or Intel/Micron CXL DIMMs to replace the NUMA emulation and validate whether PCIe bandwidth or higher CXL latency (200--400\,ns vs.\ NUMA's $\sim$130\,ns) changes the throughput/latency trade-off reported here.
+
+  \item \textbf{CXL~3.0 multi-node pooling.} Extend the prototype to a CXL fabric switch (e.g., Astera Labs Leo or Microchip CXL switch) to evaluate whether the single-machine scope limitation can be removed while retaining the latency advantage over RDMA.
+
+  \item \textbf{Comparative evaluation against CXL-native KV stores.} Several recent systems target CXL disaggregated memory and serve as natural baselines:
+    \begin{itemize}[nosep]
+      \item \textbf{CHash}~\cite{chash}: A CXL-aware hash table that exploits byte-addressability and persistence on CXL-attached memory; directly comparable to Outback's DMPH index on a CXL device.
+      \item \textbf{MIND}~\cite{mind2021}: Disaggregated memory with hardware-accelerated coherence; shows the overhead of maintaining cache coherence across CXL nodes.
+      \item \textbf{AIFM}~\cite{aifm2020}: Application-integrated far memory using a user-space runtime; comparable to Outback's software-lane approach.
+      \item \textbf{Carbink}~\cite{carbink2022}: Fault-tolerant disaggregated memory with erasure coding; relevant for evaluating the reliability cost of memory disaggregation.
+    \end{itemize}
+
+  \item \textbf{Write-heavy workload optimization.} YCSB-A and YCSB-F show the largest gap between RDMA and paper results. Investigate software write-combining, per-lane write buffers, and CLWB/CLFLUSHOPT instructions on CXL to reduce write contention on the memory bus.
+
+  \item \textbf{Baseline reproduction.} Fix the broken RACE, MICA, and cluster-hash builds to reproduce the paper's Fig.~7--8 comparison ratios and place the CXL numbers in the same coordinate space as the original evaluation.
+
+  \item \textbf{CXL resize under contention.} Extend the versioned resize state machine to handle concurrent readers during expansion, and measure resize latency spikes under the YCSB workloads to validate the paper's claim of non-disruptive resizing.
 \end{itemize}
 
 % ══════════════════════════════════════════════════════════════════════════════
@@ -2468,6 +2498,32 @@ DOI:~\href{https://doi.org/10.1145/1807128.1807152}{10.1145/1807128.1807152}.
 ``Compute Express Link Specification, Revision 3.0,''
 \emph{CXL Consortium White Paper}, 2022.
 Available: \url{https://www.computeexpresslink.org/}.
+
+\bibitem{chash}
+H.~Li, D.~Zhang, Y.~Hua, P.~Zuo, and J.~Sheng,
+``{CHash}: Enabling Efficient Persistent Hashing on {CXL}-Attached Memory,''
+in \emph{Proc.\ 23rd USENIX Conference on File and Storage Technologies
+  (FAST)}, 2025.
+
+\bibitem{mind2021}
+J.~Le, H.~Lee, Y.~Kwon, S.~Kannan, and P.~Gibbons,
+``{MIND}: In-Network Memory Management for Disaggregated Data Centers,''
+in \emph{Proc.\ 28th ACM Symposium on Operating Systems Principles (SOSP)},
+  2021, pp.~488--504.
+DOI:~\href{https://doi.org/10.1145/3477132.3483561}{10.1145/3477132.3483561}.
+
+\bibitem{aifm2020}
+Z.~Ruan, M.~Schwarzkopf, M.~Aguilera, and A.~Belay,
+``{AIFM}: High-Performance, Application-Integrated Far Memory,''
+in \emph{Proc.\ 14th USENIX Symposium on Operating Systems Design and
+  Implementation (OSDI)}, 2020, pp.~315--332.
+
+\bibitem{carbink2022}
+Y.~Zhou, H.~Wassel, S.~Liu, J.~Gao, J.~Mickens, M.~Yu, C.~Jamieson,
+  H.~Madhyastha, and V.~Chandra,
+``Carbink: Fault-Tolerant Far Memory,''
+in \emph{Proc.\ 16th USENIX Symposium on Operating Systems Design and
+  Implementation (OSDI)}, 2022, pp.~55--71.
 
 \end{thebibliography}
 
