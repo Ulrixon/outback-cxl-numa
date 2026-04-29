@@ -93,24 +93,24 @@ Since dedicated CXL hardware was unavailable, we emulated CXL memory disaggregat
 \section{Environment Setup}
 % ══════════════════════════════════════════════════════════════════════════════
 
-Three hardware environments are compared throughout this report: the original paper's primary cluster (CloudLab \texttt{r650}, CX-6 100\,Gbps), our RDMA reproduction (CloudLab \texttt{r320}, CX-3 56\,Gbps FDR), and our CXL/NUMA extension (CloudLab \texttt{c6420}, dual-socket NUMA as a CXL proxy). Table~\ref{tab:setup-diff} lists the key differences and their expected effect on results; full hardware listings appear in Appendix~\ref{app:hw}.
+Three hardware environments are compared throughout this report: the original paper's two clusters (CloudLab \texttt{r650} with CX-6 100\,Gbps, and \texttt{r320} with CX-3 56\,Gbps), our RDMA reproduction (CloudLab \texttt{r320}, same hardware as the paper's Fig.~10 cluster), and our CXL/NUMA extension (CloudLab \texttt{c6420}, dual-socket NUMA as a CXL proxy). Table~\ref{tab:setup-diff} lists the key differences and their expected effect on results; full hardware listings appear in Appendix~\ref{app:hw}.
 
 \begin{table*}[!t]
 \centering
 \caption{Key setup differences and their expected impact on results}
 \label{tab:setup-diff}
 \resizebox{\textwidth}{!}{%
-\begin{tabular}{@{}lllll@{}}
+\begin{tabular}{@{}llllll@{}}
 \toprule
-\textbf{Factor} & \textbf{Paper (r650)} & \textbf{RDMA (ours)} & \textbf{CXL (c6420)} & \textbf{Expected Impact} \\
+\textbf{Factor} & \textbf{Paper (r650, Fig.~9)} & \textbf{Paper (r320, Fig.~10)} & \textbf{RDMA (ours)} & \textbf{CXL (c6420)} & \textbf{Expected Impact} \\
 \midrule
-NIC Speed & CX-6, 100\,Gbps IB & CX-3 MX354A, 56\,Gbps FDR IB & N/A (load/store) & $\sim$2$\times$ lower NIC BW vs.\ paper \\
-CPU & Platinum 8360Y, 2$\times$36C & Xeon E5-2450, 8C & 2$\times$Xeon Gold 6142, 16C & RDMA: weaker per-shard CPU \\
-Max Threads & 144 per shard & 32 (2$\times$16) & 32 (1 socket) & Cannot test high-thread behavior \\
-MN Threads & 1--3 (2 shards) & 1--3 & none (no MN CPU)$^a$ & RDMA limited by MN CPU \\
-Node Count & 6 (2 shards $\times$ 3) & 3 & 1 & Fewer CN for RDMA \\
-Memory & 256\,GB & 16\,GB & 384\,GB & RDMA OOMs at 80M; CXL handles 80M \\
-Interconnect & PCIe / InfiniBand FDR & InfiniBand FDR & UPI $\sim$150\,ns & CXL $\sim$20$\times$ lower latency \\
+NIC Speed & CX-6, 100\,Gbps IB & CX-3 MX354A, 56\,Gbps FDR IB & CX-3 MX354A, 56\,Gbps FDR IB & N/A (load/store) & $\sim$2$\times$ lower NIC BW vs.\ r650; like-for-like vs.\ r320 \\
+CPU & Platinum 8360Y, 2$\times$36C & Xeon E5-2450, 8C & Xeon E5-2450, 8C & 2$\times$Xeon Gold 6142, 16C & RDMA CPU identical to paper's Fig.~10 \\
+Max Threads & 144/shard & 64 (8/node) & 32 (2$\times$16) & 32 (1 socket) & Cannot test high-thread regime of Fig.~9 \\
+MN Threads & 1--3 (2 shards) & 4 & 1--3 & none (no MN CPU)$^a$ & RDMA MN count matches Fig.~10 \\
+Node Count & 6 (2 shards $\times$ 3) & Up to 9 (1\,MN + 8\,CN) & 3 & 1 & Fewer CN; lower aggregate throughput \\
+Memory & 256\,GB & 16\,GB DDR3 & 16\,GB DDR3 & 384\,GB DDR4 & RDMA memory identical to Fig.~10; OOM at 80M \\
+Interconnect & PCIe / InfiniBand FDR & InfiniBand FDR & InfiniBand FDR & UPI $\sim$150\,ns & CXL $\sim$20$\times$ lower latency \\
 \bottomrule
 \end{tabular}}
 \vspace{2pt}
