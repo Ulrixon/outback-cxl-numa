@@ -182,7 +182,7 @@ Interconnect & PCIe / InfiniBand FDR & InfiniBand FDR & UPI $\sim$150\,ns & CXL 
 \bottomrule
 \end{tabular}}
 \vspace{2pt}
-{\scriptsize $^a$In CXL/NUMA, the ``memory node'' is NUMA node~1's DRAM only~--- no MN CPU runs. Compute threads pinned to NUMA0 access data via direct \texttt{load}/\texttt{store} over the UPI interconnect. The \texttt{mem\_threads} parameter is repurposed as \textbf{insert-lane sharding}: it partitions the \texttt{lane\_next\_free\_index} atomic allocation counter into $N$ independent lanes so that concurrent insert threads contend on different cache lines. It has zero effect on the read path (\texttt{ludo\_lookup} $\to$ \texttt{packed\_data} dereference never touches the counter) and negligible effect on writes because the bottleneck is UPI memory bus bandwidth for the actual data write, not the counter CAS. Measured throughput varies by $<$2\% across 1--3 \texttt{mem\_threads} (Section~\ref{sec:repro-mt}).}
+{\scriptsize $^a$In CXL/NUMA the ``memory node'' is NUMA node~1's DRAM only --- no MN CPU runs. Compute threads on NUMA0 access data via direct \texttt{load}/\texttt{store} over UPI. The \texttt{mem\_threads} parameter is repurposed as \textbf{insert-lane sharding} (partitions the allocation counter to reduce CAS contention); it has no effect on the read path and negligible effect on writes. Measured throughput varies by $<$2\% across 1--3 \texttt{mem\_threads} (\S\ref{sec:repro-mt}).}
 \end{table*}
 
 We expect our RDMA reproduction to show \textbf{lower aggregate throughput} than the paper's CX-6 results because of both the $\sim$2$\times$ slower NIC link (56\,Gbps FDR vs.\ 100\,Gbps CX-6) and the smaller CN count, but \textbf{comparable per-MN-thread throughput} once the MN CPU becomes the bottleneck (since serialization of RPC dispatch on the MN dominates over network bandwidth at small thread counts). Because we use the \emph{same} \texttt{r320} hardware as the paper's Figure~10 cluster, our per-MN-thread comparison against Fig.~10 is a like-for-like measurement. The CXL/NUMA extension should show \textbf{dramatically higher throughput and lower latency} by eliminating the network stack entirely.
@@ -195,28 +195,15 @@ This section documents the practical challenges encountered in setting up and ru
 
 \subsection{RDMA Setup Challenges}
 
-Getting the original Outback RDMA code to compile and run required resolving several hardware and software compatibility issues:
+Getting Outback's RDMA code running required resolving several compatibility issues not documented by the paper:
 
-\textbf{1.\ Mellanox OFED Driver Mismatch.}
-The Outback codebase depends on Mellanox's \texttt{libibverbs} and \texttt{libmlx4} libraries for ConnectX-3 RDMA operations. The default OFED driver version installed on CloudLab's Ubuntu 20.04 images was incompatible with the CX-3 firmware. We had to downgrade to MLNX\_OFED 4.9-x (the last release supporting CX-3 on kernel 5.4), as newer OFED versions dropped ConnectX-3 support entirely. This required manually removing the pre-installed driver stack and installing the legacy version:
-\begin{lstlisting}[language=bash]
-sudo apt-get remove -y ibverbs-providers libibverbs-dev
-wget https://content.mellanox.com/ofed/MLNX_OFED-4.9-x.x.x/...
-sudo ./mlnxofedinstall --force
-sudo /etc/init.d/openibd restart
-\end{lstlisting}
-
-\textbf{2.\ Linux Kernel Version Incompatibility.}
-The Outback build system uses R2 (a custom RDMA communication library) which relies on kernel-specific RDMA interfaces. Initial attempts on Ubuntu 22.04 (kernel 5.15) failed with compilation errors in the \texttt{xcomm} transport layer due to deprecated \texttt{ib\_*} API changes. We ultimately settled on Ubuntu 20.04 with kernel 5.4, which matches the kernel-era assumptions in the R2 library.
-
-\textbf{3.\ NIC Port Index Hardcoding.}
-The source code hardcodes the NIC port index used for RDMA operations. On our CloudLab CX-3 nodes, the active port varies depending on the physical NIC wiring. We found that the default \texttt{nic\_idx=0} parameter did not always correspond to the correct port. Discovering the correct port required running \texttt{ibv\_devinfo} on each node and then passing the correct \texttt{--nic\_idx} flag. On some nodes, only port 1 (not port 0) was connected, requiring a code-level change in the transport initialization.
-
-\textbf{4.\ Finding Compatible CloudLab Hardware.}
-Not all CloudLab node types support RDMA. We initially attempted to use c6420 nodes (which lack RDMA NICs) and d6515 nodes (which have ConnectX-5/6 but required different OFED versions). Only nodes carrying the legacy ConnectX-3 \texttt{mlx4} hardware worked with the OFED driver and code shipped by the artifact. Securing 3 simultaneous CX-3 nodes on CloudLab required scheduling around availability windows.
-
-\textbf{5.\ Compilation and Dependency Issues.}
-The build system expects specific versions of \texttt{cmake} ($\geq$3.16), \texttt{boost} (1.65+), and \texttt{gflags}. Several header files contained implicit dependencies on internal Mellanox headers (e.g., \texttt{hrd.h} from the MICA subsystem) that were not documented. The \texttt{setup-env.sh} script partially automates dependency installation but does not handle the OFED driver.
+\begin{itemize}[nosep]
+  \item \textbf{OFED driver:} Default Ubuntu 20.04 OFED was incompatible with CX-3. Required downgrade to MLNX\_OFED~4.9-x (the last release supporting CX-3), including manual removal of the pre-installed driver stack and OFED reinstall via \texttt{mlnxofedinstall}.
+  \item \textbf{Kernel version:} Ubuntu~22.04 (kernel~5.15) failed to compile the R2 \texttt{xcomm} transport layer due to deprecated \texttt{ib\_*} APIs; Ubuntu~20.04 (kernel~5.4) was required.
+  \item \textbf{NIC port index:} Source hardcodes the NIC port; on several nodes only port~1 (not port~0) was connected, requiring manual correction via \texttt{ibv\_devinfo} and a code edit.
+  \item \textbf{Hardware availability:} Only nodes carrying legacy ConnectX-3 (\texttt{mlx4}) hardware work with the artifact; securing 3 simultaneous CX-3 nodes on CloudLab required scheduling around availability windows.
+  \item \textbf{Build dependencies:} Requires cmake~$\geq$3.16, boost~1.65+, gflags, and MICA-specific Mellanox headers not covered by \texttt{setup-env.sh}.
+\end{itemize}
 
 \subsection{CXL/NUMA Implementation Effort}
 
@@ -301,129 +288,7 @@ All RDMA experiments use the default configuration: 50\,M keys, DMPH load factor
 
 \subsubsection{Individual YCSB Workload Results}
 
-\textbf{YCSB-C (100\% Read).}
-
-\begin{table}[H]
-\caption{RDMA YCSB-C throughput and latency (coro=2, mem\_threads=1)}
-\label{tab:rdma-ycsbc}
-\scriptsize
-\begin{tabular}{@{}llrr@{}}
-\toprule
-\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
-\midrule
-1  & 1MN 1CN             & 0.724 & 2.06 \\
-2  & 1MN 1CN diff CPU    & 1.411 & 2.11 \\
-4  & 1MN 1CN diff CPU    & 2.770 & 2.15 \\
-8  & 1MN 1CN diff CPU    & 4.503 & 3.04 \\
-16 & 1MN 1CN diff CPU    & 4.325 & 6.69 \\
-\midrule
-4  & 1MN 2CN diff CPU    & 2.802 & 2.18 \\
-8  & 1MN 2CN diff CPU    & 4.269 & 3.09 \\
-16 & 1MN 2CN diff CPU    & 4.833 & 6.75 \\
-32 & 1MN 2CN diff CPU    & 5.040 & 13.63 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{YCSB-B (95\% Read, 5\% Update).}
-
-\begin{table}[H]
-\centering
-\caption{RDMA YCSB-B throughput and latency (coro=2, mem\_threads=1)}
-\label{tab:rdma-ycsbb}
-\scriptsize
-\begin{tabular}{@{}llrr@{}}
-\toprule
-\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
-\midrule
-1  & 1MN 1CN             & 0.731 & 2.06 \\
-2  & 1MN 1CN diff CPU    & 1.451 & 2.09 \\
-4  & 1MN 1CN diff CPU    & 2.836 & 2.14 \\
-8  & 1MN 1CN diff CPU    & 3.722 & 4.47 \\
-16 & 1MN 1CN diff CPU    & 4.091 & 8.16 \\
-\midrule
-4  & 1MN 2CN diff CPU    & 2.777 & 2.23 \\
-8  & 1MN 2CN diff CPU    & 4.043 & 3.50 \\
-16 & 1MN 2CN diff CPU    & 4.461 & 6.91 \\
-32 & 1MN 2CN diff CPU    & 4.439 & 15.24 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{YCSB-A (50\% Read, 50\% Update).}
-
-\begin{table}[H]
-\centering
-\caption{RDMA YCSB-A throughput and latency (coro=2, mem\_threads=1)}
-\label{tab:rdma-ycsba}
-\scriptsize
-\begin{tabular}{@{}llrr@{}}
-\toprule
-\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
-\midrule
-1  & 1MN 1CN             & 0.740 & 2.07 \\
-2  & 1MN 1CN diff CPU    & 1.471 & 2.10 \\
-4  & 1MN 1CN diff CPU    & 2.746 & 2.22 \\
-8  & 1MN 1CN diff CPU    & 3.632 & 3.90 \\
-16 & 1MN 1CN diff CPU    & 3.783 & 7.99 \\
-\midrule
-4  & 1MN 2CN diff CPU    & 2.709 & 2.23 \\
-8  & 1MN 2CN diff CPU    & 3.649 & 4.06 \\
-16 & 1MN 2CN diff CPU    & 3.873 & 8.34 \\
-32 & 1MN 2CN diff CPU    & 4.049 & 16.27 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{YCSB-D (95\% Read, 5\% Insert).}
-
-\begin{table}[H]
-\centering
-\caption{RDMA YCSB-D throughput and latency (coro=2, mem\_threads=1)}
-\label{tab:rdma-ycsbd}
-\scriptsize
-\begin{tabular}{@{}llrr@{}}
-\toprule
-\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
-\midrule
-1  & 1MN 1CN             & 0.744 & 2.11 \\
-2  & 1MN 1CN diff CPU    & 1.460 & 2.17 \\
-4  & 1MN 1CN diff CPU    & 2.699 & 2.34 \\
-8  & 1MN 1CN diff CPU    & 3.832 & 3.57 \\
-16 & 1MN 1CN diff CPU    & 3.900 & 7.47 \\
-\midrule
-4  & 1MN 2CN diff CPU    & 2.720 & 2.34 \\
-8  & 1MN 2CN diff CPU    & 3.982 & 2.27 \\
-16 & 1MN 2CN diff CPU    & 4.229 & 7.80 \\
-32 & 1MN 2CN diff CPU    & 4.281 & 15.66 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\textbf{YCSB-F (50\% Read, 25\% Insert, 25\% Update).}
-
-\begin{table}[H]
-\centering
-\caption{RDMA YCSB-F throughput and latency (coro=2, mem\_threads=1)}
-\label{tab:rdma-ycsbf}
-\scriptsize
-\begin{tabular}{@{}llrr@{}}
-\toprule
-\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
-\midrule
-1  & 1MN 1CN             & 0.626 & 2.43 \\
-2  & 1MN 1CN diff CPU    & 1.194 & 2.60 \\
-4  & 1MN 1CN diff CPU    & 1.939 & 3.43 \\
-8  & 1MN 1CN diff CPU    & 2.213 & 6.55 \\
-16 & 1MN 1CN diff CPU    & 2.370 & 12.68 \\
-\midrule
-4  & 1MN 2CN diff CPU    & 1.926 & 3.46 \\
-8  & 1MN 2CN diff CPU    & 2.157 & 6.70 \\
-16 & 1MN 2CN diff CPU    & 2.501 & 12.08 \\
-32 & 1MN 2CN diff CPU    & 2.354 & 26.25 \\
-\bottomrule
-\end{tabular}
-\end{table}
+Per-thread throughput and latency measurements for all five YCSB workloads (C, B, A, D, F) at both 1CN and 2CN configurations are presented in Tables~\ref{tab:rdma-ycsbc}--\ref{tab:rdma-ycsbf} (Appendix~\ref{app:tables}). Key observations: read-dominated workloads (C, B, D) saturate at 4.3--5.0\,MOPS at 32 threads (2CN), while write-heavy YCSB-F peaks at only 2.5\,MOPS (16T, 2CN) and degrades at 32T due to insert/update contention. All workloads exhibit a ``hockey stick'' latency curve: flat at $\sim$2\,$\mu$s through saturation, then steeply rising.
 
 \subsubsection{RDMA vs.\ Paper YCSB Comparison}
 
@@ -535,94 +400,17 @@ Dashed lines: Fig.~9 (6$\times$r650, CX-6, 1\,MNT/shard) \quad Dotted lines: Fig
 
 \subsubsection{Comparison to Paper Figure~9}
 
-The paper's Figure~9 reports throughput on r650 nodes with CX-6 100\,Gbps NICs, using 6 nodes (2 shards of 1\,MN + 2\,CN each), 1 MN thread per shard, and up to 144 CN threads (2\,CN $\times$ 72 cores each). Table~\ref{tab:paper-fig9} shows the paper's reported peaks alongside our RDMA reproduction.
-
-\begin{table}[H]
-\centering
-\caption{Paper Figure~9 peak throughput vs.\ our RDMA reproduction (per shard, MOPS)}
-\label{tab:paper-fig9}
-\scriptsize
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}lrrrl@{}}
-\toprule
-\textbf{Workload} & \textbf{Paper Outback} & \textbf{Paper Threads} & \textbf{RDMA (ours)} & \textbf{vs Paper} \\
- & \textbf{(CX-6)} & & \textbf{32T, 2CN} & \\
-\midrule
-YCSB-A (50\%U) & 5.50 & 144 & 4.049 & 0.74$\times$ \\
-YCSB-B (5\%U)  & 5.82 & 144 & 4.439 & 0.76$\times$ \\
-YCSB-C (100\%R) & 6.01 & 72--144 & 5.040 & 0.84$\times$ \\
-YCSB-D (5\%I)   & $\sim$5.9 & 144 & 4.281 & 0.73$\times$ \\
-YCSB-F (25\%I/25\%U) & 3.62 & 144 & 2.354 & 0.65$\times$ \\
-\bottomrule
-\end{tabular}}
-\end{table}
-
-Our RDMA reproduction reaches 65--84\% of the paper's CX-6 peaks even though our NIC is roughly half the link bandwidth (56\,Gbps FDR vs.\ 100\,Gbps CX-6) and we have only one quarter the CN count. Per-MN-thread throughput is comparable: the paper's single MN thread serves $\sim$6\,MOPS on CX-6; our single MN thread serves $\sim$5\,MOPS on the slower FDR NIC. The fact that the throughput gap is far smaller than the NIC bandwidth gap confirms that the system is \textbf{MN-CPU-bound}, not NIC-bound.
+The paper's Figure~9 reports throughput on r650 nodes with CX-6 100\,Gbps NICs using 6 nodes (2 shards of 1\,MN + 2\,CN each) and up to 144 CN threads. Our RDMA reproduction reaches 65--84\% of the paper's CX-6 peaks even though our NIC is roughly half the link bandwidth (56\,Gbps FDR vs.\ 100\,Gbps CX-6) and we have only one quarter the CN count. Per-MN-thread throughput is comparable: the paper's single MN thread serves $\sim$6\,MOPS on CX-6; our single MN thread serves $\sim$5\,MOPS on the slower FDR NIC. The fact that the throughput gap is far smaller than the NIC bandwidth gap confirms that the system is \textbf{MN-CPU-bound}, not NIC-bound.
 
 \subsubsection{Comparison to Paper Figure~10 (CX-3 cluster)}
 
-The paper's Figure~10 reports throughput on r320 nodes with the Mellanox MX354A InfiniBand FDR (56\,Gbps) NIC, 4 MN threads, and up to 64 CN threads (8 per CN $\times$ 8 CN nodes). Our reproduction uses the \emph{same} r320 hardware class (E5-2450, 16\,GB DDR3-1600, MX354A FDR CX-3) but differs in two ways: (i)~we use 1 MN thread instead of 4; and (ii)~we use 2 CN nodes (32 threads max) instead of 8. Table~\ref{tab:paper-fig10} normalizes the paper's aggregate throughput to a per-MN-thread basis to enable a like-for-like comparison.
-
-\begin{table}[H]
-\centering
-\caption{Paper Fig.~10 vs.\ our RDMA reproduction: per-MN-thread peak throughput (MOPS). Both use the same r320 / CX-3 IB FDR (56\,Gbps) hardware --- this is an exact hardware match, normalized to per-MN-thread to enable like-for-like comparison.}
-\label{tab:paper-fig10}
-\scriptsize
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}lrrrrl@{}}
-\toprule
-\textbf{Workload} & \textbf{Fig.10 Agg.} & \textbf{Fig.10 /MN} & \textbf{Ours (32T)} & \textbf{Ours /MN} & \textbf{Ratio} \\
- & \textbf{(4MN, 64T)} & \textbf{(est.)} & \textbf{(1MN, 2CN)} & & \\
-\midrule
-YCSB-A (50\%U) & $\sim$15.0 & $\sim$3.75 & 4.049 & 4.049 & 1.08$\times$ ours \\
-YCSB-B (5\%U)  & $\sim$16.5 & $\sim$4.13 & 4.439 & 4.439 & 1.08$\times$ ours \\
-YCSB-C (100\%R) & $\sim$17.0 & $\sim$4.25 & 5.040 & 5.040 & 1.19$\times$ ours \\
-YCSB-D (5\%I)   & $\sim$16.0 & $\sim$4.00 & 4.281 & 4.281 & 1.07$\times$ ours \\
-YCSB-F (25\%I/25\%U) & $\sim$9.0 & $\sim$2.25 & 2.354 & 2.354 & 1.05$\times$ ours \\
-\bottomrule
-\end{tabular}}
-\end{table}
+The paper's Figure~10 uses r320 nodes with MX354A FDR (56\,Gbps), 4 MN threads, up to 64 CN threads. Our reproduction uses the \emph{same} hardware but with 1 MN thread and 2 CN nodes (32T max); the per-workload comparison is in Table~\ref{tab:paper-fig10} (Appendix~\ref{app:tables}).
 
 Even with a $\sim$5$\times$ slower NIC, our single-MN-thread throughput \textbf{exceeds} the paper's Fig.~10 per-MN-thread rate by 5--19\% across all workloads. Two factors explain this: (1) we run a single dedicated MN thread without contention from other MN threads, whereas the paper's 4 MN threads share CPU cache and memory bus, reducing per-thread efficiency; and (2) at one MN thread the workload is \emph{compute-bound at the MN}, not network-bound, so the 50G$\to$10G NIC downgrade does not affect peak per-thread throughput. The paper reports that on CX-3, Outback outperforms RACE by 5.03$\times$ (aggregate); the dotted lines in Figure~\ref{fig:rdma-ycsb-all} make this gap visible, as RACE saturates at $\sim$3--4\,MOPS even with 64 CN threads.
 
 \subsection{Coroutine Effects (Paper Figure~13)}\label{sec:repro-coro}
 
-\begin{table}[H]
-\centering
-\caption{RDMA YCSB-C coroutine effect (1MN 1CN, threads on different CPUs)}
-\label{tab:rdma-coro-1cn}
-\scriptsize
-\begin{tabular}{@{}rrrr|rrr@{}}
-\toprule
-& \multicolumn{3}{c|}{\textbf{Throughput (MOPS)}} & \multicolumn{3}{c}{\textbf{Mean Latency ($\mu$s)}} \\
-\textbf{Threads} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} \\
-\midrule
-1  & 0.366 & 0.724 & 1.081 & 2.05 & 2.06 & 2.07 \\
-2  & 0.706 & 1.411 & 2.081 & 2.12 & 2.11 & 2.16 \\
-4  & 1.385 & 2.770 & 3.680 & 2.19 & 2.15 & 2.78 \\
-8  & 2.788 & 4.503 & 4.748 & 2.14 & 3.04 & 4.44 \\
-16 & 4.375 & 4.325 & 4.402 & 3.16 & 6.69 & 10.26 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{RDMA YCSB-C coroutine effect (1MN 2CN)}
-\label{tab:rdma-coro-2cn}
-\scriptsize
-\begin{tabular}{@{}rrrr|rrr@{}}
-\toprule
-& \multicolumn{3}{c|}{\textbf{Throughput (MOPS)}} & \multicolumn{3}{c}{\textbf{Mean Latency ($\mu$s)}} \\
-\textbf{Threads} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} \\
-\midrule
-4  & 1.409 & 2.802 & 3.238 & 2.12 & 2.18 & 3.08 \\
-8  & 2.808 & 4.269 & 4.196 & 2.09 & 3.09 & 5.10 \\
-16 & 4.443 & 4.833 & 4.224 & 2.18 & 6.75 & 10.85 \\
-32 & 4.870 & 5.040 & 4.414 & 6.01 & 13.63 & 21.18 \\
-\bottomrule
-\end{tabular}
-\end{table}
+Raw coroutine measurements (1CN and 2CN configurations at C=1, 2, 3) are in Tables~\ref{tab:rdma-coro-1cn}--\ref{tab:rdma-coro-2cn} (Appendix~\ref{app:tables}). Figure~\ref{fig:rdma-coro} shows the latency--throughput frontier.
 
 \begin{figure}[H]
 \centering
@@ -730,120 +518,13 @@ Even with a $\sim$5$\times$ slower NIC, our single-MN-thread throughput \textbf{
 
 \subsection{Memory Node Thread Scaling (Paper Figure~12)}\label{sec:repro-mt}
 
-\begin{table}[H]
-\centering
-\caption{RDMA YCSB-C: mem\_threads scaling (1MN 2CN, coro=2)}
-\label{tab:rdma-memthreads}
-\scriptsize
-\begin{tabular}{@{}rrrr|rrr@{}}
-\toprule
-& \multicolumn{3}{c|}{\textbf{Throughput (MOPS)}} & \multicolumn{3}{c}{\textbf{Mean Latency ($\mu$s)}} \\
-\textbf{Threads} & \textbf{MT=1} & \textbf{MT=2} & \textbf{MT=3} & \textbf{MT=1} & \textbf{MT=2} & \textbf{MT=3} \\
-\midrule
-1  & 0.724  & 0.725  & ---    & 2.06  & 2.07  & --- \\
-4  & 2.770  & 2.790  & ---    & 2.15  & 2.18  & --- \\
-8  & 4.503  & 5.188  & ---    & 3.04  & 2.39  & --- \\
-16 & 4.325  & 6.761  & ---    & 6.69  & 4.94  & --- \\
-32 (2CN) & 5.040 & 8.266 & --- & 13.63 & 8.04 & --- \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Coroutine scaling with mem\_threads=2 was also tested (1MN 2CN):
-
-\begin{table}[H]
-\centering
-\caption{RDMA YCSB-C with mem\_threads=2: coroutine effect (1MN 2CN)}
-\label{tab:rdma-mt2-coro}
-\scriptsize
-\begin{tabular}{@{}rrrr|rrr@{}}
-\toprule
-& \multicolumn{3}{c|}{\textbf{Throughput (MOPS)}} & \multicolumn{3}{c}{\textbf{Mean Latency ($\mu$s)}} \\
-\textbf{Threads} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} \\
-\midrule
-4  & 1.423 & 2.823 & 4.044 & 2.12 & 2.14 & 2.18 \\
-8  & 2.791 & 5.390 & 6.802 & 2.17 & 2.27 & 3.07 \\
-16 & 5.436 & 8.333 & 7.933 & 2.32 & 3.15 & 6.12 \\
-32 & 7.772 & 8.266 & 8.449 & 3.95 & 8.04 & 12.26 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-With 2 MN threads, the system scales to $\sim$8.4\,MOPS at 32 threads (1.64$\times$ over 1 MN thread). This confirms the MN CPU thread is the primary bottleneck, not the NIC.
+Thread-level measurements at MT=1 and MT=2 are in Tables~\ref{tab:rdma-memthreads}--\ref{tab:rdma-mt2-coro} (Appendix~\ref{app:tables}). With 2 MN threads, the system scales to $\sim$8.4\,MOPS at 32 threads (1.64$\times$ over 1 MN thread). This confirms the MN CPU thread is the primary bottleneck, not the NIC. Figure~\ref{fig:rdma-coro-latency} (right panel) illustrates this MT=2 scaling pattern.
 
 \subsection{Real-World Datasets (Paper Figure~11)}\label{sec:repro-datasets}
 
-Facebook (FB) and OpenStreetMap (OSM) datasets were tested with uniform distribution under 50\,M keys. Zipfian workload setup was found to be \textbf{not functional} in the source code for these datasets, despite the paper showing zipfian results. Investigation revealed the zipfian parameters in code are only active for YCSB workloads.
+Facebook (FB) and OpenStreetMap (OSM) datasets were tested under 50\,M keys with uniform distribution. Zipfian workload was found \textbf{non-functional} for these datasets (code only activates zipfian parameters for YCSB workloads). Full per-thread and sensitivity measurements are in Tables~\ref{tab:rdma-fb}--\ref{tab:rdma-dataset-extra} (Appendix~\ref{app:tables}).
 
-\begin{table}[H]
-\centering
-\caption{RDMA: FB dataset, uniform, coro=2, mem\_threads=1}
-\label{tab:rdma-fb}
-\scriptsize
-\begin{tabular}{@{}llrr@{}}
-\toprule
-\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
-\midrule
-1  & 1MN 1CN             & 0.731 & 2.05 \\
-2  & 1MN 1CN diff CPU    & 1.418 & 2.11 \\
-4  & 1MN 1CN diff CPU    & 2.773 & 2.15 \\
-8  & 1MN 1CN diff CPU    & 4.541 & 3.04 \\
-16 & 1MN 1CN diff CPU    & 4.679 & 6.48 \\
-\midrule
-4  & 1MN 2CN diff CPU    & 2.737 & 2.14 \\
-8  & 1MN 2CN diff CPU    & 4.085 & 3.21 \\
-16 & 1MN 2CN diff CPU    & 4.620 & 6.65 \\
-32 & 1MN 2CN diff CPU    & 4.821 & 13.68 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{RDMA: OSM dataset, uniform, coro=2, mem\_threads=1}
-\label{tab:rdma-osm}
-\scriptsize
-\begin{tabular}{@{}llrr@{}}
-\toprule
-\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
-\midrule
-1  & 1MN 1CN             & 0.730 & 2.06 \\
-2  & 1MN 1CN diff CPU    & 1.405 & 2.12 \\
-4  & 1MN 1CN diff CPU    & 2.803 & 2.13 \\
-8  & 1MN 1CN diff CPU    & 4.514 & 3.04 \\
-16 & 1MN 1CN diff CPU    & 4.436 & 6.74 \\
-\midrule
-4  & 1MN 2CN diff CPU    & 2.745 & 2.17 \\
-8  & 1MN 2CN diff CPU    & 4.104 & 3.21 \\
-16 & 1MN 2CN diff CPU    & 4.741 & 6.20 \\
-32 & 1MN 2CN diff CPU    & 4.807 & 12.67 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{RDMA dataset: mem\_threads scaling and KV count effects (1MN 2CN, 32T)}
-\label{tab:rdma-dataset-extra}
-\scriptsize
-\begin{tabular}{@{}llrr@{}}
-\toprule
-\textbf{Config} & \textbf{Setting} & \textbf{FB (MOPS)} & \textbf{OSM (MOPS)} \\
-\midrule
-mem\_threads=1  & 50M keys & 4.821 & 4.807 \\
-mem\_threads=2  & 50M keys & 7.918 & 8.117 \\
-mem\_threads=3  & 50M keys & 10.844 & 10.588 \\
-\midrule
-KV=20M & mem\_threads=1  & 4.491 & 4.676 \\
-KV=80M & mem\_threads=1  & \multicolumn{2}{c}{OOM on server side} \\
-\midrule
-LF=0.75 & 50M keys & 4.504 & 4.341 \\
-LF=0.85 & 50M keys & 4.400 & 4.393 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Dataset results closely match YCSB-C, confirming that throughput is MN-CPU-bound and independent of data distribution. Notably, \textbf{KV=80M causes an OOM crash} on the r320's 16\,GB DRAM --- the paper tests 80M on r650 with 256\,GB, a fact not disclosed. At 60M keys with LF=0.80, a severe slowdown occurred (throughput dropping to $\sim$2,945\,ops/s with $\sim$9.8\,ms latency), consistent with the working set spilling out of physical memory and forcing the kernel into heavy paging/swap activity.
+Dataset results closely match YCSB-C, confirming throughput is MN-CPU-bound and independent of data distribution. Notably, \textbf{KV=80M causes an OOM crash} on the r320's 16\,GB DRAM --- the paper tests 80M on r650 with 256\,GB, a fact not disclosed. At 60M keys with LF=0.80, a severe slowdown occurred (throughput dropping to $\sim$2,945\,ops/s with $\sim$9.8\,ms latency), consistent with the working set spilling out of physical memory.
 
 \begin{figure}[H]
 \centering
@@ -887,44 +568,9 @@ Dataset results closely match YCSB-C, confirming that throughput is MN-CPU-bound
 
 \subsection{DMPH Memory Usage (Paper Figure~16)}\label{sec:repro-memory}
 
-A custom DMPH index monitor was developed since the original source code lacked one. The measured DMPH index sizes and client process RSS are shown below:
+A custom DMPH index monitor was developed since the original source code lacked one. Measured DMPH index sizes and client process RSS are in Tables~\ref{tab:rdma-dmph}--\ref{tab:rdma-rss} (Appendix~\ref{app:tables}).
 
-\begin{table}[H]
-\centering
-\caption{RDMA: DMPH index size (MB) by KV count and load factor}
-\label{tab:rdma-dmph}
-\scriptsize
-\begin{tabular}{@{}rrrrr@{}}
-\toprule
-\textbf{NKeys} & \textbf{LF=0.80} & \textbf{LF=0.85} & \textbf{LF=0.90} & \textbf{LF=0.95} \\
-\midrule
-20M  & 15.48 & 15.95 & 16.42 & 16.42 \\
-40M  & 30.95 & 31.88 & 32.82 & 32.82 \\
-60M  & 61.88 & 63.75 & 32.82 & 32.82 \\
-80M  & 61.88 & 63.75 & 65.62 & 65.62 \\
-100M & 61.88 & 63.75 & 65.62 & 65.62 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-\begin{table}[H]
-\centering
-\caption{RDMA: client process RSS (MB) by KV count and load factor (OSM dataset)}
-\label{tab:rdma-rss}
-\scriptsize
-\begin{tabular}{@{}rrrr@{}}
-\toprule
-\textbf{NKeys} & \textbf{LF=0.80 (MB)} & \textbf{LF=0.85 (MB)} \\
-\midrule
-20M  & 380.8 & 364.6 \\
-40M  & 563.9 & 573.5 \\
-50M  & 640.3 & 649.4 \\
-60M  & 896.9 & 915.8 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-The DMPH index itself is small (e.g., 15.95\,MB for 20M keys at LF=0.85), but the actual client process consumes \textbf{915.8\,MB} for 60M keys --- over \textbf{14$\times$} the DMPH index size. The step-wise growth in DMPH index size (e.g., 60M and 80M giving the same index size for certain LFs) is caused by power-of-two bucket expansion. The resizing behavior differs for 60M and 80M: at 60M, the index resizes to $\sim$100M capacity when LF $<$ 0.90, while 80M reaches $\sim$60M for the index. This suggests the extendible hashing resize is coarse-grained at larger scales.
+The DMPH index itself is small (e.g., 15.95\,MB for 20M keys at LF=0.85), but the actual client process consumes \textbf{915.8\,MB} for 60M keys --- over \textbf{14$\times$} the DMPH index size. Step-wise index size jumps (e.g., 60M and 80M keys giving the same index size) are caused by power-of-two bucket expansion.
 
 \begin{figure}[H]
 \centering
@@ -1106,16 +752,7 @@ Code completeness & Implied & Resize on separate branch; broken zipfian; no YCSB
 \section{Stress Tests and Breaking Points}
 % ══════════════════════════════════════════════════════════════════════════════
 
-Beyond reproducing the paper's claimed results, we deliberately tested the system under conditions that push it past its designed operating envelope. These experiments reveal fragility not captured by the paper:
-
-\begin{enumerate}[nosep]
-  \item \textbf{OOM at 80M keys (RDMA):} The r320's 16\,GB DRAM per node is insufficient for 80M KV pairs once the raw KV array, the DMPH index, and the pre-registered RDMA huge-page MR are all in memory simultaneously. The server process crashes with an out-of-memory error during bring-up. The paper tests 80M on r650 (256\,GB) without disclosing this constraint.
-  \item \textbf{Memory swapping at 60M keys:} At 60M keys with LF=0.80, throughput collapsed from $\sim$4.5\,MOPS to $\sim$2,945\,ops/s ($\sim$9.8\,ms latency) --- a \textbf{1,500$\times$ slowdown} caused by memory swapping when the working set exceeds available DRAM.
-  \item \textbf{Write degradation at scale:} YCSB-F throughput \emph{decreases} from 2.50\,MOPS (16T, 2CN) to 2.35\,MOPS at 32T --- a negative scaling pattern not reported in the paper, indicating contention on insert/update paths.
-  \item \textbf{Coroutine overload:} Coro=3 at 32 threads causes latency to explode to 21\,$\mu$s (vs.\ 6\,$\mu$s for coro=1 at the same throughput), indicating no backpressure mechanism exists to prevent queue depth saturation.
-  \item \textbf{CXL/NUMA resize stalls:} Resize events cause a $\sim$95\% throughput stall (near-zero MOPS for 1--12\,s) because the shared-memory remap blocks all clients atomically. The 16-thread 4th resize shows a 12-second zero-throughput window.
-  \item \textbf{Range queries impossible:} YCSB-E cannot be run (see \S\ref{sec:codebase-issues}), exposing a fundamental limitation of the DMPH indexing approach for workloads requiring ordered access.
-\end{enumerate}
+Beyond the paper's designed operating envelope, two critical memory limits were identified. (1)~\textbf{OOM at 80M keys (RDMA):} The r320's 16\,GB DRAM is insufficient for 80M KV pairs once the raw KV array, DMPH index, and pre-registered RDMA hugepage MR are all resident simultaneously --- the paper tests 80M only on r650 (256\,GB) without disclosing this constraint. (2)~\textbf{Swap thrashing at 60M keys:} At 60M keys with LF=0.80, throughput collapsed from $\sim$4.5\,MOPS to $\sim$2,945\,ops/s ($\sim$9.8\,ms latency) --- a \textbf{1,500$\times$} slowdown from memory swapping. Additional fragility points (write degradation at scale, coroutine overload, CXL resize stalls, range queries) are detailed in Sections~\ref{sec:codebase-issues}, \ref{sec:repro-coro}, \ref{sec:repro-mt}, and the three-way analysis (\S\ref{sec:repro-datasets}).
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{CXL/NUMA Extension Results}
@@ -1127,25 +764,7 @@ This section presents the CXL/NUMA extension results, which go beyond reproducin
 
 \subsubsection{YCSB-C (100\% Read)}
 
-\begin{table}[H]
-\centering
-\caption{CXL/NUMA YCSB-C throughput and latency (coro=2, mem\_threads=1)}
-\label{tab:numa-ycsbc}
-\begin{tabular}{@{}rrrrr@{}}
-\toprule
-\textbf{Threads} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} & \textbf{P99 ($\mu$s)} & \textbf{P999 ($\mu$s)} \\
-\midrule
-1  & 4.794  & 0.126 & 0.40 & 0.50 \\
-2  & 9.056  & 0.135 & 0.40 & 0.50 \\
-4  & 17.833 & 0.137 & 0.40 & 0.60 \\
-8  & 35.737 & 0.139 & 0.50 & 0.60 \\
-16 & 70.091 & 0.141 & 0.50 & 0.70 \\
-32 & 118.270 & 0.153 & 0.50 & 0.70 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-% --- CXL/NUMA YCSB-C bar chart ---
+Full per-thread measurements (Tput, Mean/P99/P999 latency) are in Table~\ref{tab:numa-ycsbc} (Appendix~\ref{app:tables}).
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}
@@ -1174,24 +793,7 @@ This section presents the CXL/NUMA extension results, which go beyond reproducin
 
 \subsection{Coroutine (Batch) Irrelevance}
 
-\begin{table}[H]
-\centering
-\caption{CXL/NUMA YCSB-C: coroutine/batch effect (threads on different CPUs)}
-\label{tab:numa-coro}
-\scriptsize
-\begin{tabular}{@{}rrrr|rrr@{}}
-\toprule
-& \multicolumn{3}{c|}{\textbf{Throughput (MOPS)}} & \multicolumn{3}{c}{\textbf{Mean Latency ($\mu$s)}} \\
-\textbf{Threads} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} \\
-\midrule
-1  & 4.776  & 4.794  & 4.743  & 0.126 & 0.126 & 0.126 \\
-4  & 17.734 & 17.833 & 17.675 & 0.138 & 0.137 & 0.137 \\
-8  & 35.827 & 35.737 & 35.399 & 0.138 & 0.139 & 0.138 \\
-16 & 70.214 & 70.091 & 69.548 & 0.140 & 0.141 & 0.140 \\
-32 & 116.106 & 118.270 & 121.286 & 0.155 & 0.153 & 0.152 \\
-\bottomrule
-\end{tabular}
-\end{table}
+Raw C=1/2/3 measurements are in Table~\ref{tab:numa-coro} (Appendix~\ref{app:tables}).
 
 \begin{figure}[H]
 \centering
@@ -1252,38 +854,7 @@ This section presents the CXL/NUMA extension results, which go beyond reproducin
 
 \subsection{All YCSB Workloads}
 
-\begin{table}[H]
-\centering
-\caption{CXL/NUMA results across YCSB workloads (coro=2, mem\_threads=1)}
-\label{tab:numa-ycsb-all}
-\scriptsize
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}llrrr@{}}
-\toprule
-\textbf{Workload} & \textbf{Threads} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} & \textbf{P99 ($\mu$s)} \\
-\midrule
-\multirow{4}{*}{YCSB-B (95R/5U)} & 4  & 17.775 & 0.142 & 0.60 \\
-  & 8  & 35.772 & 0.141 & 0.60 \\
-  & 16 & 69.087 & 0.144 & 0.50 \\
-  & 32 & 122.821 & 0.141 & 0.50 \\
-\midrule
-\multirow{4}{*}{YCSB-A (50R/50U)} & 4  & 10.422 & 0.295 & 1.00 \\
-  & 8  & 21.909 & 0.274 & 1.30 \\
-  & 16 & 44.183 & 0.275 & 1.90 \\
-  & 32 & 85.514 & 0.263 & 2.80 \\
-\midrule
-\multirow{4}{*}{YCSB-D (95R/5Ins)} & 4  & 19.691 & 0.094 & 0.60 \\
-  & 8  & 40.854 & 0.089 & 0.50 \\
-  & 16 & 82.002 & 0.088 & 0.50 \\
-  & 32 & 129.707 & 0.087 & 0.70 \\
-\midrule
-\multirow{4}{*}{YCSB-F (50R/25I/25U)} & 4  & 8.460 & 0.276 & 0.80 \\
-  & 8  & 18.189 & 0.243 & 0.70 \\
-  & 16 & 31.935 & 0.269 & 0.80 \\
-  & 32 & 46.775 & 0.315 & 0.90 \\
-\bottomrule
-\end{tabular}}
-\end{table}
+Per-workload measurements (B, A, D, F at 4--32 threads) are in Table~\ref{tab:numa-ycsb-all} (Appendix~\ref{app:tables}).
 
 \begin{figure}[H]
 \centering
@@ -1322,30 +893,7 @@ This section presents the CXL/NUMA extension results, which go beyond reproducin
 
 \subsection{Dataset Sensitivity}
 
-\begin{table}[H]
-\centering
-\caption{CXL/NUMA: Facebook (FB) and OpenStreetMap (OSM) datasets (uniform, coro=2)}
-\label{tab:numa-datasets}
-\scriptsize
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}lrrrr@{}}
-\toprule
-\textbf{Config (32T)} & \textbf{FB (MOPS)} & \textbf{FB Lat} & \textbf{OSM (MOPS)} & \textbf{OSM Lat} \\
-\midrule
-mem\_threads=1 & 118.108 & 0.154 & 118.017 & 0.153 \\
-mem\_threads=2 & 119.454 & 0.153 & 120.604 & 0.153 \\
-mem\_threads=3 & 118.380 & 0.153 & 118.392 & 0.154 \\
-\midrule
-KV=20M & 149.266 & 0.108 & 150.242 & 0.107 \\
-KV=50M & 118.108 & 0.154 & 118.017 & 0.153 \\
-KV=80M & 100.621 & 0.199 & 101.690 & 0.200 \\
-\midrule
-LF=0.75 & 124.817 & 0.141 & 124.982 & 0.140 \\
-LF=0.85 & 121.532 & 0.146 & 121.216 & 0.147 \\
-LF=0.95 & 118.108 & 0.154 & 118.017 & 0.153 \\
-\bottomrule
-\end{tabular}}
-\end{table}
+Full sensitivity measurements (KV count, load factor, real datasets) are in Table~\ref{tab:numa-datasets} (Appendix~\ref{app:tables}).
 
 \begin{figure}[H]
 \centering
@@ -1606,32 +1154,7 @@ The paper's YCSB-C results (Figure~9c) are the most detailed, reporting baseline
 \subsection{Throughput Scaling (Three-Way)}
 % ──────────────────────────────────────────────────────────────────────────────
 
-\begin{table}[H]
-\centering
-\caption{Three-way YCSB-C throughput comparison (MOPS per shard)}
-\label{tab:three-way}
-\scriptsize
-\begin{tabular}{@{}rrrr@{}}
-\toprule
-\textbf{Threads} & \textbf{Paper CX-6 (r650)} & \textbf{RDMA (r320)} & \textbf{CXL/NUMA (c6420)} \\
- & \textbf{1\,MN, 4\,CN} & \textbf{1\,MN, 1--2\,CN} & \textbf{NUMA0$\to$NUMA1} \\
-\midrule
-1  &  --- & 0.724 & 4.794 \\
-2  &  --- & 1.411 & 9.056 \\
-4  &  --- & 2.770 & 17.833 \\
-8  & $\sim$1.2$^*$ & 4.503 & 35.737 \\
-12 & $\sim$1.8$^*$ & --- & --- \\
-16 & --- & 4.325 & 70.091 \\
-20 & $\sim$2.8$^*$ & --- & --- \\
-32 & --- & 5.040 (2CN) & 118.270 \\
-72 & 6.01 & --- & --- \\
-144 & 6.01 & --- & --- \\
-\bottomrule
-\end{tabular}
-
-\vspace{2pt}
-{\scriptsize $^*$Estimated from Figure~9c curve shape; paper only states peak=6.01 at 72T.}
-\end{table}
+Detailed thread-by-thread three-way YCSB-C measurements are in Table~\ref{tab:three-way} (Appendix~\ref{app:tables}).
 
 \begin{figure}[H]
 \centering
@@ -1680,31 +1203,9 @@ The paper's YCSB-C results (Figure~9c) are the most detailed, reporting baseline
 \subsection{Dataset Comparison (Three-Way)}
 % ──────────────────────────────────────────────────────────────────────────────
 
-The paper's Figure~11 evaluates Get throughput on Facebook (FB) and OpenStreetMap (OSM) datasets under uniform and zipfian-0.99 distributions. At 144 threads, the paper reports:
+The paper's Figure~11 evaluates Get throughput on Facebook (FB) and OpenStreetMap (OSM) datasets (uniform and zipfian-0.99). Detailed platform-by-platform numbers are in Table~\ref{tab:paper-fig11} (Appendix~\ref{app:tables}).
 
-\begin{table}[H]
-\centering
-\caption{Paper Figure~11 dataset results vs.\ CXL/NUMA (MOPS, Get throughput)}
-\label{tab:paper-fig11}
-\scriptsize
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}lrrrrr@{}}
-\toprule
-\textbf{Dataset} & \textbf{Paper Outback} & \textbf{Paper RACE} & \textbf{Paper MICA} & \textbf{Paper Cluster} & \textbf{CXL/NUMA} \\
- & \textbf{(CX-6, 144T)} & \textbf{(CX-6, 144T)} & \textbf{(CX-6, 144T)} & \textbf{(CX-6, 144T)} & \textbf{(32T)} \\
-\midrule
-FB, uniform & $\sim$6.0 & $\sim$4.35$^\dagger$ & $\sim$2.96$^\dagger$ & $\sim$5.45$^\dagger$ & \textbf{118.11} \\
-OSM, uniform & $\sim$6.0 & $\sim$4.35$^\dagger$ & $\sim$2.96$^\dagger$ & $\sim$5.31$^\dagger$ & \textbf{118.02} \\
-FB, zipfian & $\sim$6.0 & $\sim$4.44$^\ddagger$ & $\sim$2.93$^\ddagger$ & $\sim$5.31$^\ddagger$ & --- \\
-OSM, zipfian & $\sim$6.0 & $\sim$4.35$^\dagger$ & --- & --- & --- \\
-\bottomrule
-\end{tabular}}
-
-\vspace{2pt}
-{\scriptsize $^\dagger$Derived from 1.38$\times$/2.03$\times$/1.1$\times$ at 144T (uniform FB). \quad $^\ddagger$Derived from 1.35$\times$/2.05$\times$/1.13$\times$ at 144T (zipfian FB).}
-\end{table}
-
-Our RDMA reproduction on the same datasets shows 4.82\,MOPS (FB) and 4.81\,MOPS (OSM) at 32 threads with 1 MN thread --- consistent with the paper's per-MN-thread throughput. With 3 MN threads, RDMA reaches 10.84\,MOPS (FB) and 10.59\,MOPS (OSM). Our CXL/NUMA results at 32 threads (\textbf{118\,MOPS}) are \textbf{$\sim$20$\times$} the paper's peak dataset throughput on CX-6 at 144 threads, and \textbf{$\sim$11$\times$} our RDMA reproduction at 3 MN threads. Notably, zipfian distribution for real datasets was found \textbf{non-functional} in the source code despite the paper reporting such results in Figure~11(c,d).
+Our RDMA reproduction shows 4.82\,MOPS (FB) and 4.81\,MOPS (OSM) at 32 threads --- consistent with the paper's per-MN-thread throughput. With 3 MN threads, RDMA reaches 10.84\,MOPS (FB) and 10.59\,MOPS (OSM). Our CXL/NUMA results at 32 threads (\textbf{118\,MOPS}) are \textbf{$\sim$20$\times$} the paper's peak. Notably, zipfian distribution for real datasets was found \textbf{non-functional} in the source code despite the paper reporting such results.
 
 \begin{figure}[H]
 \centering
@@ -1749,19 +1250,15 @@ Our RDMA reproduction on the same datasets shows 4.82\,MOPS (FB) and 4.81\,MOPS 
 \label{fig:dataset-3way-cmp}
 \end{figure}
 
-Figure~\ref{fig:dataset-3way-cmp} visualises this contrast directly. When MN threads increase from 1 to 3, both the paper and our RDMA reproduction scale nearly linearly (6$\to$14\,MOPS for the paper; 4.8$\to$10.8\,MOPS for our RDMA), confirming the MN CPU is the shared bottleneck. CXL/NUMA shows \emph{no change}: all six bars are within 2\% of 118\,MOPS regardless of the \texttt{mem\_threads} parameter, because with direct load/store access there is no server-side CPU to bottleneck. The dataset identity (FB vs.\ OSM) similarly has no measurable effect on any platform, indicating that the DMPH index lookup cost is data-distribution-invariant under uniform access.
+Both paper and RDMA scale near-linearly with MN threads (MN CPU is the bottleneck), while CXL/NUMA shows $<$2\% variation. Dataset identity (FB vs.\ OSM) has no measurable effect, confirming DMPH lookup cost is data-distribution-invariant under uniform access.
 
 % ──────────────────────────────────────────────────────────────────────────────
 \subsection{MN Thread Scalability (Three-Way)}
 % ──────────────────────────────────────────────────────────────────────────────
 
-The paper's Figure~12 varies MN threads from 1 to 3 using 4$\times$ r650 compute nodes (288 CN threads). The key findings:
-\begin{itemize}[nosep]
-  \item Outback throughput is 1.10--1.21$\times$ of Cluster and $\sim$3$\times$ of MICA.
-  \item Total throughput with 2 MN threads: 9.89\,MOPS (CX-6).
-\end{itemize}
+The paper's Figure~12 varies MN threads 1--3 (4$\times$ r650, 288 CN threads): Outback is 1.10--1.21$\times$ Cluster and $\sim$3$\times$ MICA; peak at 2 MN threads is 9.89\,MOPS.
 
-Our CXL/NUMA experiments show that memory node threads have \textbf{no measurable impact} on throughput (Table~\ref{tab:numa-datasets}), varying by $<$2\% across 1--3 mem\_threads. Our RDMA reproduction confirms the paper's trend: 1T: 4.82, 2T: 7.92, 3T: 10.84\,MOPS on FB dataset (near-linear with MN threads). This is expected: without RPC dispatch, there is no CPU bottleneck on the ``memory node'' side --- CXL clients directly access data via load/store instructions.
+Our CXL/NUMA results show \textbf{no measurable impact} from mem\_threads ($<$2\% variance). Our RDMA confirms the paper's trend: 1T: 4.82, 2T: 7.92, 3T: 10.84\,MOPS (near-linear), because without RPC dispatch there is no MN CPU bottleneck on the CXL path.
 
 \begin{figure}[H]
 \centering
@@ -1803,12 +1300,7 @@ Our CXL/NUMA experiments show that memory node threads have \textbf{no measurabl
 \subsection{Coroutine Effects (Three-Way)}
 % ──────────────────────────────────────────────────────────────────────────────
 
-The paper's Figure~13 shows latency--throughput curves for YCSB-C with varying coroutine counts. Key findings from the paper:
-\begin{itemize}[nosep]
-  \item More coroutines increase throughput when CN threads $<$ 72 (hides RDMA RTT).
-  \item Max throughput $\sim$6\,MOPS with 1 MN thread regardless of coroutine count.
-  \item Latency doubles/triples when MN thread becomes the bottleneck (at 216 CN threads).
-\end{itemize}
+The paper's Figure~13 shows YCSB-C latency--throughput curves for varying coroutine counts: more coroutines increase throughput when CN threads $<$ 72 (hiding RDMA RTT), with max $\sim$6\,MOPS regardless of coroutine count at 1 MN thread, and latency doubling/tripling when MN CPU becomes the bottleneck at 216 threads.
 
 \begin{figure*}[t]
 \centering
@@ -1852,9 +1344,9 @@ The paper's Figure~13 shows latency--throughput curves for YCSB-C with varying c
 \subsection{Sensitivity Analysis (Paper Figures~14--15)}
 % ──────────────────────────────────────────────────────────────────────────────
 
-\textbf{Load factor (Paper Fig.~14):} The paper reports that varying load factor from 0.75 to 0.95 causes ``trivial'' impact on throughput ($\sim$6\,MOPS for all). Our RDMA reproduction confirms this: FB throughput varies from 4.50 (LF=0.75) to 4.82 (LF=0.95) MOPS at 32T. Our CXL/NUMA results also confirm: 124.8 (LF=0.75) to 118.1 (LF=0.95) --- a 5.4\% difference.
+\textbf{Load factor (Fig.~14):} Both paper ($\sim$6\,MOPS) and our RDMA (4.50--4.82\,MOPS) confirm trivial impact ($<$7\%) from LF 0.75--0.95. CXL/NUMA shows 5.4\% decrease (124.8$\to$118.1\,MOPS).
 
-\textbf{KV pair count (Paper Fig.~15):} The paper reports that increasing from 20M to 80M KV pairs decreases throughput from 6.02 to 5.83\,MOPS ($\sim$3.2\% decrease) on CX-6. Our RDMA reproduction at 32T shows: 4.49 (20M) to OOM crash (80M) --- the r320's 16\,GB DRAM is insufficient for 80M keys once the raw KV array, DMPH index, and pre-registered RDMA huge-page MR are all in memory. At 60M keys with LF=0.80, throughput collapsed to $\sim$2,945\,ops/s ($\sim$9.8\,ms latency), consistent with heavy paging/swap activity once the working set spills out of physical memory. Our CXL/NUMA results show: 149.3 (20M) to 100.6 (80M) --- a \textbf{32.6\%} decrease dominated by L3 cache misses.
+\textbf{KV count (Fig.~15):} Paper reports 3.2\% decrease (6.02$\to$5.83\,MOPS, 20M$\to$80M). Our RDMA OOMs at 80M (r320 has only 16\,GB DRAM); at 60M the server swaps, collapsing to $\sim$2,945\,ops/s ($\sim$9.8\,ms). CXL/NUMA shows 32.6\% decrease (149.3$\to$100.6\,MOPS) from L3 cache misses.
 
 \begin{table}[H]
 \centering
@@ -1876,44 +1368,7 @@ KV Pairs & 20M $\to$ 80M    & 3.2\% decrease & OOM at 80M & \textbf{32.6\%} decr
 \subsection{Memory Usage (Three-Way, Paper Figure~16)}
 % ──────────────────────────────────────────────────────────────────────────────
 
-The paper's Figure~16 plots compute-node DMPH index memory against the number of KV pairs (20M--100M) for load factors 0.80--0.95. The paper states: ``the memory usage at each compute node for 20 million KV pairs per shard is around 12.5\,MB, and the cost is below 60\,MB for 100M KV pairs per shard.'' The paper's theoretical formula for compute-node memory is $(2.33 + 2/\epsilon) \times n$~bits, where $\epsilon$ is the load factor and $n$ is the number of keys.
-
-We developed a custom DMPH index monitor (absent from the original source) and measured the actual DMPH index size at every combination of load factor (0.80--0.95) and key count (20M--100M). The same monitor was ported to the CXL/NUMA client (\texttt{client\_numa --memory\_only}). Table~\ref{tab:fig16-cmp} compares the paper's theoretical formula predictions with both RDMA and CXL/NUMA measurements.
-
-\begin{table*}[t]
-\centering
-\caption{Paper Figure~16 vs.\ RDMA and CXL/NUMA measured DMPH index size (MB). The paper's theoretical formula is $(2.33 + 2/\epsilon) \times n$ bits; its Figure~16 text states ``around 12.5\,MB'' for 20M keys and ``below 60\,MB'' for 100M keys.}
-\label{tab:fig16-cmp}
-\scriptsize
-\resizebox{\textwidth}{!}{%
-\begin{tabular}{@{}r rrrr rrrr@{}}
-\toprule
- & \multicolumn{4}{c}{\textbf{LF = 0.80}} & \multicolumn{4}{c}{\textbf{LF = 0.85}} \\
-\cmidrule(lr){2-5}\cmidrule(lr){6-9}
-\textbf{NKeys} & Theory & Paper$^\dagger$ & RDMA & CXL & Theory & Paper$^\dagger$ & RDMA & CXL \\
-\midrule
-20M  & 11.52 & $\sim$12.5 & 15.48 & 15.47 & 11.17 & $\sim$12.5 & 15.95 & 15.93 \\
-40M  & 23.03 & $\sim$25 & 30.95 & 30.93 & 22.33 & $\sim$25 & 31.88 & 31.87 \\
-60M  & 34.55 & $\sim$37 & \textbf{61.88} & \textbf{61.87} & 33.50 & $\sim$37 & \textbf{63.75} & \textbf{63.73} \\
-80M  & 46.06 & $\sim$50 & 61.88 & 61.87 & 44.66 & $\sim$50 & 63.75 & 63.73 \\
-100M & 57.58 & $<$60 & 61.88 & 61.87 & 55.83 & $<$60 & 63.75 & 63.73 \\
-\midrule
- & \multicolumn{4}{c}{\textbf{LF = 0.90}} & \multicolumn{4}{c}{\textbf{LF = 0.95}} \\
-\cmidrule(lr){2-5}\cmidrule(lr){6-9}
-\textbf{NKeys} & Theory & Paper$^\dagger$ & RDMA & CXL & Theory & Paper$^\dagger$ & RDMA & CXL \\
-\midrule
-20M  & 10.85 & $\sim$12.5 & 16.42 & 16.40 & 10.57 & $\sim$12.5 & 16.42 & \textbf{16.87} \\
-40M  & 21.71 & $\sim$25 & 32.82 & 32.80 & 21.15 & $\sim$25 & 32.82 & \textbf{33.73} \\
-60M  & 32.56 & $\sim$37 & 32.82 & 32.80 & 31.72 & $\sim$37 & 32.82 & \textbf{33.73} \\
-80M  & 43.41 & $\sim$50 & 65.62 & 65.60 & 42.30 & $\sim$50 & 65.62 & \textbf{67.47} \\
-100M & 54.27 & $<$60 & 65.62 & 65.60 & 52.87 & $<$60 & 65.62 & \textbf{67.47} \\
-\bottomrule
-\end{tabular}%
-}
-
-\vspace{2pt}
-{\scriptsize $^\dagger$Paper Figure~16 values estimated from stated anchors (``around 12.5\,MB'' at 20M, ``below 60\,MB'' at 100M) and the linear shape of the published curves. Bold CXL values at LF=0.95 highlight where CXL differs from RDMA due to slightly larger Othello arrays; at LF$\leq$0.90 the two differ by only $\sim$16\,KB.}
-\end{table*}
+The paper's Figure~16 plots compute-node DMPH index memory for 20M--100M keys at LF 0.80--0.95, claiming ``around 12.5\,MB'' at 20M and ``below 60\,MB'' at 100M. A four-way comparison (paper formula, paper Fig.~16 estimates, RDMA, CXL) is in Table~\ref{tab:fig16-cmp} (Appendix~\ref{app:tables}).
 
 \begin{figure*}[t]
 \centering
@@ -1921,7 +1376,7 @@ We developed a custom DMPH index monitor (absent from the original source) and m
 \begin{groupplot}[
     group style={group size=2 by 1, horizontal sep=1.5cm},
     width=0.45\textwidth,
-    height=6.5cm,
+    height=5.5cm,
     xlabel={KV Pairs (Millions)},
     ylabel={DMPH Index Size (MB)},
     xtick={20,40,60,80,100},
@@ -1964,14 +1419,7 @@ We developed a custom DMPH index monitor (absent from the original source) and m
 \label{fig:paper-fig16-cmp}
 \end{figure*}
 
-Three key discrepancies emerge between the paper's claims and our measurements:
-\begin{enumerate}[nosep]
-  \item \textbf{Power-of-2 bucket allocation.} The seed array requires one byte per bucket, and bucket counts are powers of two. The Othello arrays are also sized proportionally to bucket count. When $n$ crosses a doubling boundary (e.g., 60M at LF=0.85 triggers $2^{24} \to 2^{25}$ buckets), the index size nearly doubles while both the paper's formula and Figure~16 predict smooth $\sim$50\% growth.
-  \item \textbf{Consistent overprovisioning beyond the paper's data.} Even the paper's own Figure~16 measurements ($\sim$12.5\,MB at 20M) are $\sim$10\% above the theoretical formula (10.6--11.5\,MB). Our measurements (15.5--16.9\,MB at 20M) are a further 24--35\% above the paper's Figure~16, totaling 34--55\% above the formula. This gap is caused by power-of-2 sizing of Othello internal hash arrays and lock array overhead ($\sim$16\,KB per table).
-  \item \textbf{Plateau behavior.} Because bucket counts are powers of two, the index size is \emph{identical} for 60M, 80M, and 100M keys at LF$\leq$0.85 (all use $2^{25}=33$M buckets). Neither the paper's formula nor its Figure~16 captures this plateau, which means adding 40M more keys (60M$\to$100M) costs \emph{zero} additional memory.
-\end{enumerate}
-
-Across both platforms, the DMPH index sizes are virtually identical: RDMA and CXL/NUMA differ by at most $\sim$16\,KB at LF$\leq$0.90 (the lock array is excluded from the CXL/NUMA port since it uses process-level mutexes instead). At LF=0.95, the CXL/NUMA Othello arrays are $\sim$3\% larger because the \texttt{client\_numa} code uses a slightly different rounding path for the array allocation at the highest load factor. This confirms that the DMPH data structure is identical across platforms --- the architectural difference lies solely in how the indexed data is \emph{accessed} (RDMA RPC vs.\ direct load/store), not in how the index is \emph{stored}.
+Three key discrepancies between the paper's claims and our measurements: (1)~\textbf{Power-of-2 allocation} --- bucket counts double at crossing boundaries (e.g., 60M at LF=0.85 triggers $2^{24}\!\to\!2^{25}$ buckets), causing the index to jump from $\sim$32 to $\sim$64\,MB while the paper predicts smooth $\sim$50\% growth. (2)~\textbf{Overprovisioning} --- our measurements (15.5--16.9\,MB at 20M) are 24--35\% above the paper's Figure~16 values and 34--55\% above the formula, due to power-of-2 Othello hash array sizing and lock array overhead. (3)~\textbf{Plateau behavior} --- the index size is \emph{identical} for 60M, 80M, and 100M keys at LF$\leq$0.85 (all use $2^{25}$ buckets), so adding 40M keys costs zero additional memory --- a feature invisible in the paper's figure. RDMA and CXL/NUMA differ by at most $\sim$16\,KB, confirming the DMPH data structure is transport-agnostic.
 
 In addition, the actual RDMA client \emph{process} RSS far exceeds the DMPH index: 364.6\,MB for 20M keys and 915.8\,MB for 60M keys (at LF=0.85), which is 23$\times$ and 14$\times$ the DMPH index, respectively. The CXL/NUMA client avoids this overhead entirely --- no RDMA buffer registration, no QP connection state, and no coroutine stacks are needed. The paper does not report process-level memory at all, presenting only the DMPH index as the compute-node memory cost.
 
@@ -2026,34 +1474,8 @@ P99 Latency (est.)& $\sim$6\,$\mu$s & 0.50\,$\mu$s & $\sim$12$\times$ \\
 \centering
 \begin{tikzpicture}
 \begin{axis}[
-    ybar,
-    width=0.95\columnwidth,
-    height=6cm,
-    ylabel={Mean Latency ($\mu$s)},
-    symbolic x coords={RDMA,CXL/NUMA},
-    xtick=data,
-    ymode=log,
-    log origin=infty,
-    ymin=0.05, ymax=10,
-    bar width=40pt,
-    title={Mean Latency Comparison (YCSB-C, 8 threads)},
-    enlarge x limits=0.5,
-]
-\addplot[fill=rdmacolor!80, nodes near coords, nodes near coords style={font=\small\bfseries}, point meta=explicit symbolic] coordinates {(RDMA,3.04) [3.04]};
-\addplot[fill=numacolor!80, nodes near coords, nodes near coords style={font=\small\bfseries}, point meta=explicit symbolic] coordinates {(CXL/NUMA,0.139) [0.139]};
-\legend{RDMA (3.04\,$\mu$s), CXL/NUMA (0.139\,$\mu$s)}
-\end{axis}
-\end{tikzpicture}
-\caption{CXL/NUMA reduces mean latency by \textbf{21.9$\times$} compared to RDMA, from 3.04\,$\mu$s to 0.139\,$\mu$s. The paper does not report absolute latency values for comparison.}
-\label{fig:latency-cmp}
-\end{figure}
-
-\begin{figure}[H]
-\centering
-\begin{tikzpicture}
-\begin{axis}[
     width=\columnwidth,
-    height=8cm,
+    height=6.5cm,
     xlabel={Throughput (MOPS)},
     ylabel={Mean Latency ($\mu$s)},
     xmin=0, xmax=130,
@@ -2097,171 +1519,7 @@ P99 Latency (est.)& $\sim$6\,$\mu$s & 0.50\,$\mu$s & $\sim$12$\times$ \\
 \subsection{Scaling Characteristics Summary}
 % ──────────────────────────────────────────────────────────────────────────────
 
-\begin{table}[H]
-\centering
-\caption{Platform scaling characteristics}
-\label{tab:scaling}
-\scriptsize
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}llll@{}}
-\toprule
-\textbf{Platform} & \textbf{Peak MOPS} & \textbf{Scaling} & \textbf{Bottleneck} \\
-\midrule
-Paper (CX-6) & $\sim$6/shard & Sub-linear; 144T & 1 MN CPU thread serving RPCs \\
-Paper (CX-3) & --- & Sub-linear; 64T & MN CPU, weaker NIC \\
-RDMA (r320)  & 5.04 & Sub-linear; 32T & 56\,Gbps FDR NIC + 1 MN CPU \\
-CXL/NUMA     & 118.27 & Near-linear; 32T & DRAM BW at extreme threads \\
-\bottomrule
-\end{tabular}}
-\end{table}
-
-% ──────────────────────────────────────────────────────────────────────────────
-\subsection{Discrepancy Summary}
-% ──────────────────────────────────────────────────────────────────────────────
-
-\begin{table}[H]
-\centering
-\caption{Paper claims vs.\ reproduction findings}
-\label{tab:discrepancy}
-\scriptsize
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{@{}p{2.0cm}p{2.0cm}p{4.5cm}@{}}
-\toprule
-\textbf{Claim} & \textbf{Paper} & \textbf{Reproduction Finding} \\
-\midrule
-5.03$\times$ over RACE (CX-3) & Reported for YCSB-C & Not directly verified (baselines not reproduced); our Outback throughput is consistent with paper's per-MN-thread rate \\
-6.01\,MOPS peak (CX-6) & Figure~9c, 72T & Cannot test (no CX-6 hardware); CXL achieves 118\,MOPS at 32T \\
-Linear scaling & To 144 CN threads & RDMA saturates at $\sim$5\,MOPS (limited hardware); CXL scales linearly \\
-Smooth resize ($\sim$52\% drop) & Figure~17 & RDMA shows $\sim$45\% drop; CXL shows $\sim$95\% drop (brief stall) \\
-Minimal memory (12.5\,MB/20M) & Figure~16 & DMPH index measures 16.87\,MB; process RSS is 915.8\,MB \\
-Coroutines essential & Figure~13 & Confirmed for RDMA (2$\times$ gain); irrelevant for CXL \\
-Write performance competitive & YCSB-A, F & YCSB-F degrades faster than paper implies \\
-Code completeness & Implied & Resizing on separate branch; hard-coded limits; narrow HW compatibility \\
-\bottomrule
-\end{tabular}}
-\end{table}
-
-% ══════════════════════════════════════════════════════════════════════════════
-\section{Literature Review}
-% ══════════════════════════════════════════════════════════════════════════════
-
-This section surveys the systems and techniques directly relevant to this work:
-the Outback paper being reproduced, the RDMA-based KV store baselines compared in
-all experiment graphs, the hashing primitives that underpin Outback's index, and
-the CXL memory interconnect technology used for the extension.
-
-% ──────────────────────────────────────────────────────────────────────────────
-\subsection{The Reproduced Paper: Outback}
-% ──────────────────────────────────────────────────────────────────────────────
-
-\textbf{Outback}~\cite{outback} is the primary system studied in this report.
-It addresses the \emph{one-sided vs.\ two-sided RDMA dilemma}: one-sided RDMA
-requires multiple round trips for traditional hash or tree indexes; two-sided RPC
-resolves the index in one round trip but imposes CPU load on memory nodes,
-violating the disaggregation principle.  Outback resolves this by splitting the
-index into two components:
-\begin{itemize}[nosep]
-  \item A \emph{compute-heavy, memory-efficient} DMPH seed component
-        (Ludo~\cite{ludo} arrays) cached entirely on compute nodes.
-  \item A \emph{memory-heavy, compute-efficient} Othello bucket-locator
-        component residing on memory nodes and accessed with a single
-        one-sided RDMA READ.
-\end{itemize}
-The prototype is evaluated on a CloudLab cluster using Mellanox ConnectX-6
-100\,Gbps InfiniBand and achieves 1.06--5.03$\times$ throughput over the
-state-of-the-art baselines (RACE, RPC-MICA, Cluster) on YCSB workloads.
-Published as a full paper in \emph{PVLDB}, vol.\ 18, 2024.
-
-% ──────────────────────────────────────────────────────────────────────────────
-\subsection{Baseline Systems Compared in the Graphs}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The experiment graphs in Sections~\ref{sec:repro-ycsb}--\ref{sec:repro-resize}
-and in the three-way comparative analysis include three published baselines.
-
-\textbf{RACE}~\cite{race} (\emph{One-Sided RDMA-Conscious Extendible Hashing}) is
-an extendible hashing index designed for disaggregated memory~\cite{race}.  All
-operations --- lookups, inserts, and resizing --- are performed via one-sided RDMA
-verbs without involving memory-node CPUs. RACE uses a lock-free remote concurrency
-control scheme and extendible remote resizing.  Outback's paper reports 2.43--5.03$\times$
-throughput over RACE on YCSB-A/C; our RDMA reproduction corroborates the relative
-ordering (5.04\,MOPS vs.\ the paper's 4.59\,MOPS for RACE at equivalent thread counts).
-Published in \emph{USENIX ATC 2021}.
-
-\textbf{MICA}~\cite{mica} (\emph{A Holistic Approach to Fast In-Memory Key-Value
-Storage}) is a single-machine in-memory KV store tuned for multi-core CPUs with
-kernel-bypass networking~\cite{mica}. It achieves 65--77\,MOPS on a single server
-using partitioned data and a lightweight DPDK-based network stack. In Outback's
-evaluation, MICA is invoked via two-sided RPC (\textit{RPC-MICA}), which adds
-network round-trip overhead; it is the weakest baseline in the paper's
-YCSB-C comparison (2.47\,MOPS at 72 CN threads).
-Published in \emph{USENIX NSDI 2014}.
-
-\textbf{Cluster RPC} is the third baseline reported in Outback's Figure~9.  It
-represents a conventional cluster-hash approach (similar to the hash table in
-DrTM+R~\cite{drtmr}) accessed via two-sided RPC.  It reaches $\sim$5.41\,MOPS at
-72 threads --- slightly above RACE and slightly below Outback --- forming the
-middle of the baseline band in all throughput-scaling figures.
-
-% ──────────────────────────────────────────────────────────────────────────────
-\subsection{Additional Related RDMA KV Stores in the Codebase}
-% ──────────────────────────────────────────────────────────────────────────────
-
-The repository also contains benchmark stubs for three additional RDMA KV
-systems that appear in related work comparisons in the broader literature,
-though they are not plotted as baselines in this report's graphs.
-
-\textbf{FaSST}~\cite{fasst} (\emph{Fast, Scalable and Simple Distributed
-Transactions}) uses two-sided unreliable-datagram RPCs over RDMA instead of
-one-sided operations~\cite{fasst}.  It demonstrates that two-sided RPCs can
-outperform one-sided RDMA in transactional workloads because of better
-flexibility, while avoiding the scalability bottlenecks of RC-based one-sided
-RDMA in large clusters.  Published in \emph{OSDI 2016}.
-
-\textbf{DrTM+R}~\cite{drtmr} (\emph{Fast In-Memory Transaction Processing Using
-RDMA and HTM}) combines RDMA with hardware transactional memory (HTM) to achieve
-high-performance distributed ACID transactions~\cite{drtmr}.  The \texttt{r2}
-communication library used by Outback is derived from DrTM+H, the successor
-system presented at \emph{OSDI 2018}~\cite{drtmh}.
-
-\textbf{ROLEX}~\cite{rolex} (\emph{A Scalable RDMA-oriented Learned Key-Value
-Store for Disaggregated Memory Systems}) replaces perfect-hash indexes with
-learned indexes (B-tree models) to reduce the number of RDMA round trips for
-lookups~\cite{rolex}.  Like Outback, it processes all requests on compute nodes
-via one-sided RDMA.  Published in \emph{USENIX FAST 2023}.
-
-% ──────────────────────────────────────────────────────────────────────────────
-\subsection{Key Algorithmic Primitives}
-% ──────────────────────────────────────────────────────────────────────────────
-
-\textbf{Ludo Hashing}~\cite{ludo} is the compact perfect-hashing scheme that
-forms the compute-node component of Outback's DMPH index~\cite{ludo}. It achieves
-$3.76 + 1.05\ell$ bits per key-value item (for $\ell$-bit values), which is near
-the information-theoretic minimum. Ludo supports dynamic insertions and deletions
-with low amortized cost.  Outback uses Ludo seed arrays to resolve the hash
-function parameter for a query key before issuing the RDMA READ.
-Published in \emph{ACM SIGMETRICS / POMACS 2020}.
-
-\textbf{YCSB}~\cite{ycsb} (\emph{Yahoo! Cloud Serving Benchmark}) is the
-standard benchmark suite used throughout this report~\cite{ycsb}. The six
-workloads (A--F) span read-heavy, write-heavy, and scan-heavy access patterns,
-and are parameterized by key distribution (uniform, Zipfian) and operation mix.
-All throughput and latency figures in this report use 50\,M key-value pairs with
-a 10\,M key working set under Zipfian distribution.
-Published in \emph{ACM SoCC 2010}.
-
-% ──────────────────────────────────────────────────────────────────────────────
-\subsection{CXL Memory Disaggregation}
-% ──────────────────────────────────────────────────────────────────────────────
-
-\textbf{Compute Express Link (CXL)}~\cite{cxl} is an open interconnect standard
-built on PCIe that provides cache-coherent, load/store-accessible remote memory.
-CXL.mem enables host CPUs to access remote memory at 150--300\,ns latency ---
-10--20$\times$ lower than RDMA's typical 2--5\,$\mu$s round-trip.  CXL~3.0
-extends the standard to support multi-node memory pooling.  In this work, CXL.mem
-semantics are emulated via NUMA inter-socket shared memory on a dual-socket
-CloudLab c6420 machine, where cross-socket UPI latency ($\sim$100--200\,ns)
-provides a faithful proxy.
+In summary, all RDMA-based platforms (paper CX-6, paper CX-3, our r320) plateau at 4.3--6.0\,MOPS due to the 1 MN CPU thread bottleneck, while CXL/NUMA scales near-linearly to 118\,MOPS at 32 threads (limited only by DRAM bandwidth). See Table~\ref{tab:repro-summary} (\S\ref{sec:repro-ycsb}) and the discrepancy analysis in Appendix~\ref{app:tables} for full platform comparisons.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \section{Discussion}
@@ -2300,44 +1558,20 @@ This study reproduced Outback's RDMA experiments on nine CloudLab Apt \texttt{r3
 % ── Limitations ────────────────────────────────────────────────────────────
 \subsection{Limitations}
 
-Several limitations constrain the conclusions drawn in this study:
-
 \begin{itemize}[nosep]
-  \item \textbf{NUMA as CXL proxy:} Our CXL results are produced on a dual-socket NUMA machine (CloudLab \texttt{c6420}) with inter-socket DDR4, not real CXL hardware. NUMA avoids PCIe bandwidth and latency constraints present in actual CXL devices; real CXL latency is typically 200--400\,ns (vs.\ our 130--150\,ns), and PCIe bandwidth caps ($\sim$32\,GB/s for PCIe 5.0 $\times$16) may limit high-thread throughput in ways NUMA does not.
+  \item \textbf{NUMA as CXL proxy:} Results use inter-socket DDR4 (NUMA), not real CXL hardware. Real CXL latency is typically 200--400\,ns (vs.\ our 130--150\,ns); PCIe bandwidth caps may further limit throughput.
 
-  \item \textbf{Incomplete codebase:} The upstream Outback repository has build-breaking issues in its RACE, MICA, and cluster-hash baselines (see \S\ref{sec:codebase-issues}), preventing reproduction of the paper's Fig.~7--8 comparison ratios. Our throughput numbers cannot be placed in context against these baselines.
+  \item \textbf{Incomplete codebase and reproduction gap:} Broken RACE/MICA/Cluster builds prevent verifying the paper's 5.03$\times$ ratio. Our peak RDMA throughput falls short of the paper's, likely from undisclosed OFED version, hugepage configuration, or DRAM allocation differences.
 
-  \item \textbf{RDMA reproduction gap:} Our 9-node CloudLab cluster uses Mellanox CX-3 56\,Gbps FDR InfiniBand, identical to the paper's hardware. However, our aggregate throughput at peak (8T/CN) falls short of the paper's reported peak, likely due to differences in server-side DRAM allocation, hugepage configuration, and MLNX\_OFED driver versions that were not disclosed.
+  \item \textbf{Resize incomplete:} Upstream resize code segfaults under RDMA load; our NUMA resize state machine is functional but produces data only for the NUMA transport.
 
-  \item \textbf{Resize experiment incomplete:} The paper's dynamic resizing experiment (Fig.~16) requires a stable server that survives the measurement window. The upstream resize code segfaults under load; our NUMA resize state machine is functional but produces data only for the NUMA transport, not the RDMA path.
-
-  \item \textbf{Single-machine CXL scope:} CXL/NUMA is inherently limited to one physical host. The disaggregated memory pool model (multiple compute nodes sharing one memory node) cannot be evaluated without either CXL~3.0 fabric hardware or a multi-machine emulation layer.
-
-  \item \textbf{Range query unsupported:} YCSB-E (range scans) cannot be evaluated because the DMPH index does not support ordered traversal, making scan-heavy workload comparisons impossible with the current design.
+  \item \textbf{Scope:} CXL/NUMA is limited to one physical host; YCSB-E (range scans) cannot be evaluated because DMPH does not support ordered traversal.
 \end{itemize}
 
 % ── Future Work ────────────────────────────────────────────────────────────
 \subsection{Future Work}
 
-\begin{itemize}[nosep]
-  \item \textbf{Real CXL hardware validation.} Deploy Outback-CXL on a server equipped with a Samsung CXL memory expander (e.g., CMM-D 128\,GB) or Intel/Micron CXL DIMMs to replace the NUMA emulation and validate whether PCIe bandwidth or higher CXL latency (200--400\,ns vs.\ NUMA's $\sim$130\,ns) changes the throughput/latency trade-off reported here.
-
-  \item \textbf{CXL~3.0 multi-node pooling.} Extend the prototype to a CXL fabric switch (e.g., Astera Labs Leo or Microchip CXL switch) to evaluate whether the single-machine scope limitation can be removed while retaining the latency advantage over RDMA.
-
-  \item \textbf{Comparative evaluation against CXL-native KV stores.} Several recent systems target CXL disaggregated memory and serve as natural baselines:
-    \begin{itemize}[nosep]
-      \item \textbf{CHash}~\cite{chash}: A CXL-aware hash table that exploits byte-addressability and persistence on CXL-attached memory; directly comparable to Outback's DMPH index on a CXL device.
-      \item \textbf{MIND}~\cite{mind2021}: Disaggregated memory with hardware-accelerated coherence; shows the overhead of maintaining cache coherence across CXL nodes.
-      \item \textbf{AIFM}~\cite{aifm2020}: Application-integrated far memory using a user-space runtime; comparable to Outback's software-lane approach.
-      \item \textbf{Carbink}~\cite{carbink2022}: Fault-tolerant disaggregated memory with erasure coding; relevant for evaluating the reliability cost of memory disaggregation.
-    \end{itemize}
-
-  \item \textbf{Write-heavy workload optimization.} YCSB-A and YCSB-F show the largest gap between RDMA and paper results. Investigate software write-combining, per-lane write buffers, and CLWB/CLFLUSHOPT instructions on CXL to reduce write contention on the memory bus.
-
-  \item \textbf{Baseline reproduction.} Fix the broken RACE, MICA, and cluster-hash builds to reproduce the paper's Fig.~7--8 comparison ratios and place the CXL numbers in the same coordinate space as the original evaluation.
-
-  \item \textbf{CXL resize under contention.} Extend the versioned resize state machine to handle concurrent readers during expansion, and measure resize latency spikes under the YCSB workloads to validate the paper's claim of non-disruptive resizing.
-\end{itemize}
+Key directions include: (1)~validating on real CXL hardware (Samsung CMM-D, Intel CXL DIMMs) to assess PCIe bandwidth and 200--400\,ns CXL latency effects; (2)~extending to CXL~3.0 multi-node pooling via a fabric switch to remove the single-machine limitation; (3)~comparing against CXL-native KV stores (CHash~\cite{chash}, MIND~\cite{mind2021}, AIFM~\cite{aifm2020}); (4)~fixing broken RACE/MICA/Cluster builds for direct ratio verification; and (5)~optimizing write-heavy workloads (YCSB-A/F) with per-lane write buffers and CLWB instructions on CXL.
 
 % ══════════════════════════════════════════════════════════════════════════════
 \appendices
@@ -2429,6 +1663,529 @@ sudo numactl \
   --mem_threads=1 --coros=2 \
   --workloads=ycsbc
 \end{lstlisting}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Detailed Numerical Results}\label{app:tables}
+% ══════════════════════════════════════════════════════════════════════════════
+
+\subsection*{RDMA YCSB Raw Measurements}
+
+\begin{table}[H]
+\caption{RDMA YCSB-C throughput and latency (coro=2, mem\_threads=1)}
+\label{tab:rdma-ycsbc}
+\scriptsize
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
+\midrule
+1  & 1MN 1CN             & 0.724 & 2.06 \\
+2  & 1MN 1CN diff CPU    & 1.411 & 2.11 \\
+4  & 1MN 1CN diff CPU    & 2.770 & 2.15 \\
+8  & 1MN 1CN diff CPU    & 4.503 & 3.04 \\
+16 & 1MN 1CN diff CPU    & 4.325 & 6.69 \\
+\midrule
+4  & 1MN 2CN diff CPU    & 2.802 & 2.18 \\
+8  & 1MN 2CN diff CPU    & 4.269 & 3.09 \\
+16 & 1MN 2CN diff CPU    & 4.833 & 6.75 \\
+32 & 1MN 2CN diff CPU    & 5.040 & 13.63 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA YCSB-B throughput and latency (coro=2, mem\_threads=1)}
+\label{tab:rdma-ycsbb}
+\scriptsize
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
+\midrule
+1  & 1MN 1CN             & 0.731 & 2.06 \\
+2  & 1MN 1CN diff CPU    & 1.451 & 2.09 \\
+4  & 1MN 1CN diff CPU    & 2.836 & 2.14 \\
+8  & 1MN 1CN diff CPU    & 3.722 & 4.47 \\
+16 & 1MN 1CN diff CPU    & 4.091 & 8.16 \\
+\midrule
+4  & 1MN 2CN diff CPU    & 2.777 & 2.23 \\
+8  & 1MN 2CN diff CPU    & 4.043 & 3.50 \\
+16 & 1MN 2CN diff CPU    & 4.461 & 6.91 \\
+32 & 1MN 2CN diff CPU    & 4.439 & 15.24 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA YCSB-A throughput and latency (coro=2, mem\_threads=1)}
+\label{tab:rdma-ycsba}
+\scriptsize
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
+\midrule
+1  & 1MN 1CN             & 0.740 & 2.07 \\
+2  & 1MN 1CN diff CPU    & 1.471 & 2.10 \\
+4  & 1MN 1CN diff CPU    & 2.746 & 2.22 \\
+8  & 1MN 1CN diff CPU    & 3.632 & 3.90 \\
+16 & 1MN 1CN diff CPU    & 3.783 & 7.99 \\
+\midrule
+4  & 1MN 2CN diff CPU    & 2.709 & 2.23 \\
+8  & 1MN 2CN diff CPU    & 3.649 & 4.06 \\
+16 & 1MN 2CN diff CPU    & 3.873 & 8.34 \\
+32 & 1MN 2CN diff CPU    & 4.049 & 16.27 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA YCSB-D throughput and latency (coro=2, mem\_threads=1)}
+\label{tab:rdma-ycsbd}
+\scriptsize
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
+\midrule
+1  & 1MN 1CN             & 0.744 & 2.11 \\
+2  & 1MN 1CN diff CPU    & 1.460 & 2.17 \\
+4  & 1MN 1CN diff CPU    & 2.699 & 2.34 \\
+8  & 1MN 1CN diff CPU    & 3.832 & 3.57 \\
+16 & 1MN 1CN diff CPU    & 3.900 & 7.47 \\
+\midrule
+4  & 1MN 2CN diff CPU    & 2.720 & 2.34 \\
+8  & 1MN 2CN diff CPU    & 3.982 & 2.27 \\
+16 & 1MN 2CN diff CPU    & 4.229 & 7.80 \\
+32 & 1MN 2CN diff CPU    & 4.281 & 15.66 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA YCSB-F throughput and latency (coro=2, mem\_threads=1)}
+\label{tab:rdma-ycsbf}
+\scriptsize
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
+\midrule
+1  & 1MN 1CN             & 0.626 & 2.43 \\
+2  & 1MN 1CN diff CPU    & 1.194 & 2.60 \\
+4  & 1MN 1CN diff CPU    & 1.939 & 3.43 \\
+8  & 1MN 1CN diff CPU    & 2.213 & 6.55 \\
+16 & 1MN 1CN diff CPU    & 2.370 & 12.68 \\
+\midrule
+4  & 1MN 2CN diff CPU    & 1.926 & 3.46 \\
+8  & 1MN 2CN diff CPU    & 2.157 & 6.70 \\
+16 & 1MN 2CN diff CPU    & 2.501 & 12.08 \\
+32 & 1MN 2CN diff CPU    & 2.354 & 26.25 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{RDMA vs.\ Paper Comparison Tables}
+
+\begin{table}[H]
+\centering
+\caption{Paper Figure~9 peak throughput vs.\ our RDMA reproduction (per shard, MOPS)}
+\label{tab:paper-fig9}
+\scriptsize
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrl@{}}
+\toprule
+\textbf{Workload} & \textbf{Paper Outback (CX-6)} & \textbf{Paper Threads} & \textbf{RDMA 32T 2CN} & \textbf{vs Paper} \\
+\midrule
+YCSB-A (50\%U) & 5.50 & 144 & 4.049 & 0.74$\times$ \\
+YCSB-B (5\%U)  & 5.82 & 144 & 4.439 & 0.76$\times$ \\
+YCSB-C (100\%R) & 6.01 & 72--144 & 5.040 & 0.84$\times$ \\
+YCSB-D (5\%I)   & $\sim$5.9 & 144 & 4.281 & 0.73$\times$ \\
+YCSB-F (25\%I/25\%U) & 3.62 & 144 & 2.354 & 0.65$\times$ \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Paper Fig.~10 vs.\ RDMA per-MN-thread peak throughput (MOPS). Exact hardware match (r320/CX-3 IB FDR), normalized to per-MN-thread.}
+\label{tab:paper-fig10}
+\scriptsize
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrrl@{}}
+\toprule
+\textbf{Workload} & \textbf{Fig.10 Agg.} & \textbf{Fig.10 /MN} & \textbf{Ours (32T)} & \textbf{Ours /MN} & \textbf{Ratio} \\
+ & \textbf{(4MN, 64T)} & \textbf{(est.)} & \textbf{(1MN, 2CN)} & & \\
+\midrule
+YCSB-A & $\sim$15.0 & $\sim$3.75 & 4.049 & 4.049 & 1.08$\times$ ours \\
+YCSB-B & $\sim$16.5 & $\sim$4.13 & 4.439 & 4.439 & 1.08$\times$ ours \\
+YCSB-C & $\sim$17.0 & $\sim$4.25 & 5.040 & 5.040 & 1.19$\times$ ours \\
+YCSB-D & $\sim$16.0 & $\sim$4.00 & 4.281 & 4.281 & 1.07$\times$ ours \\
+YCSB-F & $\sim$9.0 & $\sim$2.25 & 2.354 & 2.354 & 1.05$\times$ ours \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\subsection*{RDMA Coroutine and MN Thread Scaling}
+
+\begin{table}[H]
+\centering
+\caption{RDMA YCSB-C coroutine effect (1MN 1CN, threads on different CPUs)}
+\label{tab:rdma-coro-1cn}
+\scriptsize
+\begin{tabular}{@{}rrrr|rrr@{}}
+\toprule
+& \multicolumn{3}{c|}{\textbf{Throughput (MOPS)}} & \multicolumn{3}{c}{\textbf{Mean Latency ($\mu$s)}} \\
+\textbf{Threads} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} \\
+\midrule
+1  & 0.366 & 0.724 & 1.081 & 2.05 & 2.06 & 2.07 \\
+2  & 0.706 & 1.411 & 2.081 & 2.12 & 2.11 & 2.16 \\
+4  & 1.385 & 2.770 & 3.680 & 2.19 & 2.15 & 2.78 \\
+8  & 2.788 & 4.503 & 4.748 & 2.14 & 3.04 & 4.44 \\
+16 & 4.375 & 4.325 & 4.402 & 3.16 & 6.69 & 10.26 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA YCSB-C coroutine effect (1MN 2CN)}
+\label{tab:rdma-coro-2cn}
+\scriptsize
+\begin{tabular}{@{}rrrr|rrr@{}}
+\toprule
+& \multicolumn{3}{c|}{\textbf{Throughput (MOPS)}} & \multicolumn{3}{c}{\textbf{Mean Latency ($\mu$s)}} \\
+\textbf{Threads} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} \\
+\midrule
+4  & 1.409 & 2.802 & 3.238 & 2.12 & 2.18 & 3.08 \\
+8  & 2.808 & 4.269 & 4.196 & 2.09 & 3.09 & 5.10 \\
+16 & 4.443 & 4.833 & 4.224 & 2.18 & 6.75 & 10.85 \\
+32 & 4.870 & 5.040 & 4.414 & 6.01 & 13.63 & 21.18 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA YCSB-C: mem\_threads scaling (1MN 2CN, coro=2)}
+\label{tab:rdma-memthreads}
+\scriptsize
+\begin{tabular}{@{}rrrr|rrr@{}}
+\toprule
+& \multicolumn{3}{c|}{\textbf{Throughput (MOPS)}} & \multicolumn{3}{c}{\textbf{Mean Latency ($\mu$s)}} \\
+\textbf{Threads} & \textbf{MT=1} & \textbf{MT=2} & \textbf{MT=3} & \textbf{MT=1} & \textbf{MT=2} & \textbf{MT=3} \\
+\midrule
+1  & 0.724  & 0.725  & ---    & 2.06  & 2.07  & --- \\
+4  & 2.770  & 2.790  & ---    & 2.15  & 2.18  & --- \\
+8  & 4.503  & 5.188  & ---    & 3.04  & 2.39  & --- \\
+16 & 4.325  & 6.761  & ---    & 6.69  & 4.94  & --- \\
+32 (2CN) & 5.040 & 8.266 & --- & 13.63 & 8.04 & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA YCSB-C with mem\_threads=2: coroutine effect (1MN 2CN)}
+\label{tab:rdma-mt2-coro}
+\scriptsize
+\begin{tabular}{@{}rrrr|rrr@{}}
+\toprule
+& \multicolumn{3}{c|}{\textbf{Throughput (MOPS)}} & \multicolumn{3}{c}{\textbf{Mean Latency ($\mu$s)}} \\
+\textbf{Threads} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} \\
+\midrule
+4  & 1.423 & 2.823 & 4.044 & 2.12 & 2.14 & 2.18 \\
+8  & 2.791 & 5.390 & 6.802 & 2.17 & 2.27 & 3.07 \\
+16 & 5.436 & 8.333 & 7.933 & 2.32 & 3.15 & 6.12 \\
+32 & 7.772 & 8.266 & 8.449 & 3.95 & 8.04 & 12.26 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{RDMA Dataset and Memory Measurements}
+
+\begin{table}[H]
+\centering
+\caption{RDMA: FB dataset, uniform, coro=2, mem\_threads=1}
+\label{tab:rdma-fb}
+\scriptsize
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
+\midrule
+1  & 1MN 1CN             & 0.731 & 2.05 \\
+2  & 1MN 1CN diff CPU    & 1.418 & 2.11 \\
+4  & 1MN 1CN diff CPU    & 2.773 & 2.15 \\
+8  & 1MN 1CN diff CPU    & 4.541 & 3.04 \\
+16 & 1MN 1CN diff CPU    & 4.679 & 6.48 \\
+\midrule
+4  & 1MN 2CN diff CPU    & 2.737 & 2.14 \\
+8  & 1MN 2CN diff CPU    & 4.085 & 3.21 \\
+16 & 1MN 2CN diff CPU    & 4.620 & 6.65 \\
+32 & 1MN 2CN diff CPU    & 4.821 & 13.68 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA: OSM dataset, uniform, coro=2, mem\_threads=1}
+\label{tab:rdma-osm}
+\scriptsize
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\textbf{Threads} & \textbf{Config} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} \\
+\midrule
+1  & 1MN 1CN             & 0.730 & 2.06 \\
+2  & 1MN 1CN diff CPU    & 1.405 & 2.12 \\
+4  & 1MN 1CN diff CPU    & 2.803 & 2.13 \\
+8  & 1MN 1CN diff CPU    & 4.514 & 3.04 \\
+16 & 1MN 1CN diff CPU    & 4.436 & 6.74 \\
+\midrule
+4  & 1MN 2CN diff CPU    & 2.745 & 2.17 \\
+8  & 1MN 2CN diff CPU    & 4.104 & 3.21 \\
+16 & 1MN 2CN diff CPU    & 4.741 & 6.20 \\
+32 & 1MN 2CN diff CPU    & 4.807 & 12.67 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA dataset: mem\_threads scaling and KV count effects (1MN 2CN, 32T)}
+\label{tab:rdma-dataset-extra}
+\scriptsize
+\begin{tabular}{@{}llrr@{}}
+\toprule
+\textbf{Config} & \textbf{Setting} & \textbf{FB (MOPS)} & \textbf{OSM (MOPS)} \\
+\midrule
+mem\_threads=1  & 50M keys & 4.821 & 4.807 \\
+mem\_threads=2  & 50M keys & 7.918 & 8.117 \\
+mem\_threads=3  & 50M keys & 10.844 & 10.588 \\
+\midrule
+KV=20M & mem\_threads=1  & 4.491 & 4.676 \\
+KV=80M & mem\_threads=1  & \multicolumn{2}{c}{OOM on server side} \\
+\midrule
+LF=0.75 & 50M keys & 4.504 & 4.341 \\
+LF=0.85 & 50M keys & 4.400 & 4.393 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA: DMPH index size (MB) by KV count and load factor}
+\label{tab:rdma-dmph}
+\scriptsize
+\begin{tabular}{@{}rrrrr@{}}
+\toprule
+\textbf{NKeys} & \textbf{LF=0.80} & \textbf{LF=0.85} & \textbf{LF=0.90} & \textbf{LF=0.95} \\
+\midrule
+20M  & 15.48 & 15.95 & 16.42 & 16.42 \\
+40M  & 30.95 & 31.88 & 32.82 & 32.82 \\
+60M  & 61.88 & 63.75 & 32.82 & 32.82 \\
+80M  & 61.88 & 63.75 & 65.62 & 65.62 \\
+100M & 61.88 & 63.75 & 65.62 & 65.62 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{RDMA: client process RSS (MB) by KV count and load factor (OSM dataset)}
+\label{tab:rdma-rss}
+\scriptsize
+\begin{tabular}{@{}rrr@{}}
+\toprule
+\textbf{NKeys} & \textbf{LF=0.80 (MB)} & \textbf{LF=0.85 (MB)} \\
+\midrule
+20M  & 380.8 & 364.6 \\
+40M  & 563.9 & 573.5 \\
+50M  & 640.3 & 649.4 \\
+60M  & 896.9 & 915.8 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection*{CXL/NUMA Raw Measurements}
+
+\begin{table}[H]
+\centering
+\caption{CXL/NUMA YCSB-C throughput and latency (coro=2, mem\_threads=1)}
+\label{tab:numa-ycsbc}
+\scriptsize
+\begin{tabular}{@{}rrrrr@{}}
+\toprule
+\textbf{Threads} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} & \textbf{P99 ($\mu$s)} & \textbf{P999 ($\mu$s)} \\
+\midrule
+1  & 4.794  & 0.126 & 0.40 & 0.50 \\
+2  & 9.056  & 0.135 & 0.40 & 0.50 \\
+4  & 17.833 & 0.137 & 0.40 & 0.60 \\
+8  & 35.737 & 0.139 & 0.50 & 0.60 \\
+16 & 70.091 & 0.141 & 0.50 & 0.70 \\
+32 & 118.270 & 0.153 & 0.50 & 0.70 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{CXL/NUMA YCSB-C: coroutine/batch effect}
+\label{tab:numa-coro}
+\scriptsize
+\begin{tabular}{@{}rrrr|rrr@{}}
+\toprule
+& \multicolumn{3}{c|}{\textbf{Throughput (MOPS)}} & \multicolumn{3}{c}{\textbf{Mean Latency ($\mu$s)}} \\
+\textbf{Threads} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} & \textbf{C=1} & \textbf{C=2} & \textbf{C=3} \\
+\midrule
+1  & 4.776  & 4.794  & 4.743  & 0.126 & 0.126 & 0.126 \\
+4  & 17.734 & 17.833 & 17.675 & 0.138 & 0.137 & 0.137 \\
+8  & 35.827 & 35.737 & 35.399 & 0.138 & 0.139 & 0.138 \\
+16 & 70.214 & 70.091 & 69.548 & 0.140 & 0.141 & 0.140 \\
+32 & 116.106 & 118.270 & 121.286 & 0.155 & 0.153 & 0.152 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{CXL/NUMA results across YCSB workloads (coro=2, mem\_threads=1)}
+\label{tab:numa-ycsb-all}
+\scriptsize
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}llrrr@{}}
+\toprule
+\textbf{Workload} & \textbf{Threads} & \textbf{Tput (MOPS)} & \textbf{Mean Lat ($\mu$s)} & \textbf{P99 ($\mu$s)} \\
+\midrule
+\multirow{4}{*}{YCSB-B (95R/5U)} & 4  & 17.775 & 0.142 & 0.60 \\
+  & 8  & 35.772 & 0.141 & 0.60 \\
+  & 16 & 69.087 & 0.144 & 0.50 \\
+  & 32 & 122.821 & 0.141 & 0.50 \\
+\midrule
+\multirow{4}{*}{YCSB-A (50R/50U)} & 4  & 10.422 & 0.295 & 1.00 \\
+  & 8  & 21.909 & 0.274 & 1.30 \\
+  & 16 & 44.183 & 0.275 & 1.90 \\
+  & 32 & 85.514 & 0.263 & 2.80 \\
+\midrule
+\multirow{4}{*}{YCSB-D (95R/5Ins)} & 4  & 19.691 & 0.094 & 0.60 \\
+  & 8  & 40.854 & 0.089 & 0.50 \\
+  & 16 & 82.002 & 0.088 & 0.50 \\
+  & 32 & 129.707 & 0.087 & 0.70 \\
+\midrule
+\multirow{4}{*}{YCSB-F (50R/25I/25U)} & 4  & 8.460 & 0.276 & 0.80 \\
+  & 8  & 18.189 & 0.243 & 0.70 \\
+  & 16 & 31.935 & 0.269 & 0.80 \\
+  & 32 & 46.775 & 0.315 & 0.90 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{CXL/NUMA: Facebook (FB) and OpenStreetMap (OSM) datasets (uniform, coro=2)}
+\label{tab:numa-datasets}
+\scriptsize
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrr@{}}
+\toprule
+\textbf{Config (32T)} & \textbf{FB (MOPS)} & \textbf{FB Lat} & \textbf{OSM (MOPS)} & \textbf{OSM Lat} \\
+\midrule
+mem\_threads=1 & 118.108 & 0.154 & 118.017 & 0.153 \\
+mem\_threads=2 & 119.454 & 0.153 & 120.604 & 0.153 \\
+mem\_threads=3 & 118.380 & 0.153 & 118.392 & 0.154 \\
+\midrule
+KV=20M & 149.266 & 0.108 & 150.242 & 0.107 \\
+KV=50M & 118.108 & 0.154 & 118.017 & 0.153 \\
+KV=80M & 100.621 & 0.199 & 101.690 & 0.200 \\
+\midrule
+LF=0.75 & 124.817 & 0.141 & 124.982 & 0.140 \\
+LF=0.85 & 121.532 & 0.146 & 121.216 & 0.147 \\
+LF=0.95 & 118.108 & 0.154 & 118.017 & 0.153 \\
+\bottomrule
+\end{tabular}}
+\end{table}
+
+\subsection*{Three-Way Comparison Tables}
+
+\begin{table}[H]
+\centering
+\caption{Three-way YCSB-C throughput comparison (MOPS per shard)}
+\label{tab:three-way}
+\scriptsize
+\begin{tabular}{@{}rrrr@{}}
+\toprule
+\textbf{Threads} & \textbf{Paper CX-6 (r650)} & \textbf{RDMA (r320)} & \textbf{CXL/NUMA (c6420)} \\
+\midrule
+1  & --- & 0.724 & 4.794 \\
+2  & --- & 1.411 & 9.056 \\
+4  & --- & 2.770 & 17.833 \\
+8  & $\sim$1.2$^*$ & 4.503 & 35.737 \\
+16 & --- & 4.325 & 70.091 \\
+32 & --- & 5.040 (2CN) & 118.270 \\
+72 & 6.01 & --- & --- \\
+144 & 6.01 & --- & --- \\
+\bottomrule
+\end{tabular}
+
+\vspace{2pt}
+{\scriptsize $^*$Estimated from Figure~9c curve shape; paper only states peak=6.01 at 72T.}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Paper Figure~11 dataset results vs.\ CXL/NUMA (MOPS, Get throughput)}
+\label{tab:paper-fig11}
+\scriptsize
+\resizebox{\columnwidth}{!}{%
+\begin{tabular}{@{}lrrrrr@{}}
+\toprule
+\textbf{Dataset} & \textbf{Paper Outback} & \textbf{Paper RACE} & \textbf{Paper MICA} & \textbf{Paper Cluster} & \textbf{CXL/NUMA} \\
+ & \textbf{(CX-6, 144T)} & & & & \textbf{(32T)} \\
+\midrule
+FB, uniform & $\sim$6.0 & $\sim$4.35$^\dagger$ & $\sim$2.96$^\dagger$ & $\sim$5.45$^\dagger$ & \textbf{118.11} \\
+OSM, uniform & $\sim$6.0 & $\sim$4.35$^\dagger$ & $\sim$2.96$^\dagger$ & $\sim$5.31$^\dagger$ & \textbf{118.02} \\
+FB, zipfian & $\sim$6.0 & $\sim$4.44$^\ddagger$ & $\sim$2.93$^\ddagger$ & $\sim$5.31$^\ddagger$ & --- \\
+OSM, zipfian & $\sim$6.0 & $\sim$4.35$^\dagger$ & --- & --- & --- \\
+\bottomrule
+\end{tabular}}
+
+\vspace{2pt}
+{\scriptsize $^\dagger$Derived from 1.38$\times$/2.03$\times$/1.1$\times$ at 144T (uniform FB). \quad $^\ddagger$Derived from 1.35$\times$/2.05$\times$/1.13$\times$ at 144T (zipfian FB).}
+\end{table}
+
+\begin{table*}[t]
+\centering
+\caption{Paper Figure~16 vs.\ RDMA and CXL/NUMA measured DMPH index size (MB). Paper formula: $(2.33 + 2/\epsilon) \times n$ bits; paper states ``around 12.5\,MB'' at 20M and ``below 60\,MB'' at 100M.}
+\label{tab:fig16-cmp}
+\scriptsize
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{@{}r rrrr rrrr@{}}
+\toprule
+ & \multicolumn{4}{c}{\textbf{LF = 0.80}} & \multicolumn{4}{c}{\textbf{LF = 0.85}} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-9}
+\textbf{NKeys} & Theory & Paper$^\dagger$ & RDMA & CXL & Theory & Paper$^\dagger$ & RDMA & CXL \\
+\midrule
+20M  & 11.52 & $\sim$12.5 & 15.48 & 15.47 & 11.17 & $\sim$12.5 & 15.95 & 15.93 \\
+40M  & 23.03 & $\sim$25 & 30.95 & 30.93 & 22.33 & $\sim$25 & 31.88 & 31.87 \\
+60M  & 34.55 & $\sim$37 & \textbf{61.88} & \textbf{61.87} & 33.50 & $\sim$37 & \textbf{63.75} & \textbf{63.73} \\
+80M  & 46.06 & $\sim$50 & 61.88 & 61.87 & 44.66 & $\sim$50 & 63.75 & 63.73 \\
+100M & 57.58 & $<$60 & 61.88 & 61.87 & 55.83 & $<$60 & 63.75 & 63.73 \\
+\midrule
+ & \multicolumn{4}{c}{\textbf{LF = 0.90}} & \multicolumn{4}{c}{\textbf{LF = 0.95}} \\
+\cmidrule(lr){2-5}\cmidrule(lr){6-9}
+\textbf{NKeys} & Theory & Paper$^\dagger$ & RDMA & CXL & Theory & Paper$^\dagger$ & RDMA & CXL \\
+\midrule
+20M  & 10.85 & $\sim$12.5 & 16.42 & 16.40 & 10.57 & $\sim$12.5 & 16.42 & \textbf{16.87} \\
+40M  & 21.71 & $\sim$25 & 32.82 & 32.80 & 21.15 & $\sim$25 & 32.82 & \textbf{33.73} \\
+60M  & 32.56 & $\sim$37 & 32.82 & 32.80 & 31.72 & $\sim$37 & 32.82 & \textbf{33.73} \\
+80M  & 43.41 & $\sim$50 & 65.62 & 65.60 & 42.30 & $\sim$50 & 65.62 & \textbf{67.47} \\
+100M & 54.27 & $<$60 & 65.62 & 65.60 & 52.87 & $<$60 & 65.62 & \textbf{67.47} \\
+\bottomrule
+\end{tabular}%
+}
+
+\vspace{2pt}
+{\scriptsize $^\dagger$Estimated from paper's stated anchors. Bold CXL values at LF=0.95 differ from RDMA due to slightly larger Othello arrays.}
+\end{table*}
 
 % ══════════════════════════════════════════════════════════════════════════════
 \begin{thebibliography}{99}
@@ -2528,5 +2285,35 @@ in \emph{Proc.\ 16th USENIX Symposium on Operating Systems Design and
   Implementation (OSDI)}, 2022, pp.~55--71.
 
 \end{thebibliography}
+
+% ══════════════════════════════════════════════════════════════════════════════
+\section{Literature Review}\label{app:litreview}
+% ══════════════════════════════════════════════════════════════════════════════
+
+This appendix surveys the systems and techniques directly relevant to this work.
+
+\subsection*{The Reproduced Paper: Outback}
+
+\textbf{Outback}~\cite{outback} addresses the \emph{one-sided vs.\ two-sided RDMA dilemma}: one-sided RDMA requires multiple round trips for traditional hash or tree indexes; two-sided RPC resolves the index in one round trip but imposes CPU load on memory nodes. Outback resolves this by splitting the index into (1)~a \emph{compute-heavy, memory-efficient} DMPH seed component (Ludo~\cite{ludo} arrays) cached on compute nodes, and (2)~a \emph{memory-heavy, compute-efficient} Othello bucket-locator on memory nodes accessed with a single one-sided RDMA READ. Evaluated on Mellanox CX-6 100\,Gbps IB, it achieves 1.06--5.03$\times$ over baselines on YCSB. Published in \emph{PVLDB}, vol.\ 18, 2024.
+
+\subsection*{Baseline Systems}
+
+\textbf{RACE}~\cite{race} (\emph{USENIX ATC 2021}) is an extendible hashing index for disaggregated memory using only one-sided RDMA verbs. Outback reports 2.43--5.03$\times$ over RACE on YCSB-A/C.
+
+\textbf{MICA}~\cite{mica} (\emph{USENIX NSDI 2014}) is a single-machine KV store with kernel-bypass networking. In Outback's evaluation it is invoked via two-sided RPC (\textit{RPC-MICA}), making it the weakest baseline at 2.47\,MOPS (YCSB-C, 72T).
+
+\textbf{Cluster RPC} is a cluster-hash approach (similar to DrTM+R~\cite{drtmr}) via two-sided RPC, reaching $\sim$5.41\,MOPS at 72 threads.
+
+\textbf{FaSST}~\cite{fasst} (\emph{OSDI 2016}), \textbf{DrTM+R}~\cite{drtmr} (\emph{OSDI 2018}), and \textbf{ROLEX}~\cite{rolex} (\emph{USENIX FAST 2023}) are included in the codebase but not plotted in this report's graphs.
+
+\subsection*{Key Algorithmic Primitives}
+
+\textbf{Ludo Hashing}~\cite{ludo} (\emph{ACM SIGMETRICS 2020}) achieves $3.76 + 1.05\ell$ bits per KV item, near the information-theoretic minimum, with dynamic insertions. Used as Outback's DMPH seed arrays.
+
+\textbf{YCSB}~\cite{ycsb} (\emph{ACM SoCC 2010}) provides workloads A--F covering read-heavy to write-heavy patterns. All experiments use 50\,M KV pairs, 10\,M key working set, Zipfian distribution.
+
+\subsection*{CXL Memory Disaggregation}
+
+\textbf{CXL}~\cite{cxl} is an open PCIe-based interconnect providing cache-coherent load/store remote memory at 150--300\,ns. CXL~3.0 supports multi-node pooling. In this work, CXL.mem is emulated via NUMA inter-socket shared memory (UPI latency $\sim$100--200\,ns).
 
 \end{document}
