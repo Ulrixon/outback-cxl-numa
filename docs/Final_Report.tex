@@ -112,6 +112,7 @@ The CloudLab Apt-cluster \texttt{r320} nodes we secured for the RDMA experiments
 \centering
 \caption{RDMA reproduction: hardware \& configuration (CloudLab Apt \texttt{r320})}
 \label{tab:rdma-setup}
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{@{}ll@{}}
 \toprule
 \textbf{Parameter} & \textbf{Specification} \\
@@ -131,7 +132,7 @@ KV Pairs   & 50\,M keys, DMPH load factor = 0.95 \\
 Test Duration & 120 seconds per run \\
 Coroutines & 2 (default); also tested 1, 3 \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
 Note: this hardware exactly matches the CloudLab Apt \texttt{r320} profile used by the paper's Figure~10 cluster (also Apt \texttt{r320}: Xeon E5-2450, 16\,GB DDR3-1600, MX354A FDR CX-3). The difference between our reproduction and the paper's Figure~10 is therefore not in the hardware itself, but in the cluster scale we were able to allocate (3 nodes vs.\ 9 nodes in the paper) and in the MN-thread count (we use 1 MN thread vs.\ the paper's 4 MN threads in Fig.~10).
@@ -162,11 +163,11 @@ Test Duration & 120 seconds per run \\
 
 Table~\ref{tab:setup-diff} summarizes the key differences between the three environments. These differences are critical context for all result comparisons that follow.
 
-\begin{table}[H]
+\begin{table*}[!t]
 \centering
 \caption{Key setup differences and their expected impact on results}
 \label{tab:setup-diff}
-\resizebox{\columnwidth}{!}{%
+\resizebox{\textwidth}{!}{%
 \begin{tabular}{@{}lllll@{}}
 \toprule
 \textbf{Factor} & \textbf{Paper (r650)} & \textbf{RDMA (ours)} & \textbf{CXL (c6420)} & \textbf{Expected Impact} \\
@@ -182,7 +183,7 @@ Interconnect & PCIe / InfiniBand FDR & InfiniBand FDR & UPI $\sim$150\,ns & CXL 
 \end{tabular}}
 \vspace{2pt}
 {\scriptsize $^a$In CXL/NUMA, the ``memory node'' is NUMA node~1's DRAM only~--- no MN CPU runs. Compute threads pinned to NUMA0 access data via direct \texttt{load}/\texttt{store} over the UPI interconnect. The \texttt{mem\_threads} parameter is repurposed as \textbf{insert-lane sharding}: it partitions the \texttt{lane\_next\_free\_index} atomic allocation counter into $N$ independent lanes so that concurrent insert threads contend on different cache lines. It has zero effect on the read path (\texttt{ludo\_lookup} $\to$ \texttt{packed\_data} dereference never touches the counter) and negligible effect on writes because the bottleneck is UPI memory bus bandwidth for the actual data write, not the counter CAS. Measured throughput varies by $<$2\% across 1--3 \texttt{mem\_threads} (Section~\ref{sec:repro-mt}).}
-\end{table}
+\end{table*}
 
 We expect our RDMA reproduction to show \textbf{lower aggregate throughput} than the paper's CX-6 results because of both the $\sim$2$\times$ slower NIC link (56\,Gbps FDR vs.\ 100\,Gbps CX-6) and the smaller CN count, but \textbf{comparable per-MN-thread throughput} once the MN CPU becomes the bottleneck (since serialization of RPC dispatch on the MN dominates over network bandwidth at small thread counts). Because we use the \emph{same} \texttt{r320} hardware as the paper's Figure~10 cluster, our per-MN-thread comparison against Fig.~10 is a like-for-like measurement. The CXL/NUMA extension should show \textbf{dramatically higher throughput and lower latency} by eliminating the network stack entirely.
 
@@ -625,6 +626,7 @@ Even with a $\sim$5$\times$ slower NIC, our single-MN-thread throughput \textbf{
 
 \begin{figure}[H]
 \centering
+\resizebox{\columnwidth}{!}{%
 \begin{tikzpicture}
 \begin{axis}[
     width=\columnwidth,
@@ -656,11 +658,11 @@ Even with a $\sim$5$\times$ slower NIC, our single-MN-thread throughput \textbf{
 % Thread-count labels on C=2 curve
 \node[font=\tiny,anchor=south,rdmacolor] at (axis cs:2.802,2.18) {4T};
 \node[font=\tiny,anchor=south,rdmacolor] at (axis cs:4.269,3.09) {8T};
-\node[font=\tiny,anchor=west,rdmacolor]  at (axis cs:4.833,6.75) {16T};
-\node[font=\tiny,anchor=west,rdmacolor]  at (axis cs:5.040,13.63) {32T};
+\node[font=\tiny,anchor=south,rdmacolor] at (axis cs:4.833,6.75) {16T};
+\node[font=\tiny,anchor=south,rdmacolor] at (axis cs:5.040,13.63) {32T};
 \end{axis}
-\end{tikzpicture}
-\caption{RDMA coroutine latency--throughput in Paper Fig.~13 style (1MN 2CN, YCSB-C, 4--32 threads). Thread counts are labeled on the C=2 curve. Filled markers = our r320 / CX-3 FDR reproduction; thin green lines = paper Fig.~13a digitized (CX-6, r650, MT=1): solid=coro=1, dashed=coro=2, dash-dot=coro=3. Both exhibit the ``hockey stick'' shape: latency stays flat until near-saturation, then explodes. Key differences: (1) Our baseline latency $\sim$2\,$\mu$s vs.\ paper $\sim$1\,$\mu$s (CX-6 faster NIC). (2) Saturation throughput: ours C=2 peaks at 5.04\,MOPS vs.\ paper $\sim$5.5\,MOPS. (3) Coro=3 saturates earlier and at lower throughput (4.41\,MOPS at 21\,$\mu$s) than C=2 --- excess queue depth hurts under MN CPU saturation.}
+\end{tikzpicture}}
+\caption{RDMA coroutine latency--throughput in Paper Fig.~13 style (1MN 2CN, YCSB-C, 4--32 threads). Thread counts labeled on C=2 curve. Filled markers = our r320 (CX-3 FDR) reproduction; thin green lines = paper Fig.~13a digitized (CX-6, r650, MT=1), solid/dashed/dash-dot for C=1/2/3. Both exhibit the ``hockey stick'' shape. Key differences: (1)~Baseline latency $\sim$2\,$\mu$s vs.\ paper $\sim$1\,$\mu$s. (2)~C=2 peaks at 5.04\,MOPS vs.\ paper $\sim$5.5\,MOPS. (3)~C=3 saturates earlier (4.41\,MOPS, $21\,\mu$s) --- excess queue depth hurts under MN CPU saturation.}
 \label{fig:rdma-coro}
 \end{figure}
 
