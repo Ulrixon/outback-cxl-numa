@@ -429,23 +429,27 @@ run_exp_ycsb() {
     local threads_list=(1 2 4 8)         # T/CN → 8 / 16 / 32 / 64 total
     local mt_list=(1 2 3 4)              # MN threads (Fig. 10 uses 4)
 
+    # NOTE: server is restarted for each (mt, tpc) combination to avoid
+    # session ID collisions. Session IDs = start_threads + thread_id, and
+    # the server retains stale sessions across experiments. Reusing session
+    # IDs (e.g. 2T CN0 reuses IDs 0,1 from 1T) causes connect failures.
     for workload in "${workloads[@]}"; do
         for mt in "${mt_list[@]}"; do
-            local srv_log="${LOG_DIR}/server_${workload}_mt${mt}.log"
-            local srv_pid
-            start_server "${srv_log}" "${mt}" "${workload}"
-            srv_pid="${_LAST_BG_PID}"
-            wait_for_server "${srv_log}"
-
             for tpc in "${threads_list[@]}"; do
+                local srv_log="${LOG_DIR}/server_${workload}_mt${mt}_tpc${tpc}.log"
+                local srv_pid
+                start_server "${srv_log}" "${mt}" "${workload}"
+                srv_pid="${_LAST_BG_PID}"
+                wait_for_server "${srv_log}"
+
                 run_experiment \
                     "Fig10 8CN mt${mt}" \
                     "${workload}" "${NKEYS}" \
                     8 "${tpc}" "${mt}" "${DEFAULT_COROS}"
-            done
 
-            kill_server "${srv_pid}"
-            sleep 5
+                kill_server "${srv_pid}"
+                sleep 5
+            done
         done
     done
 }
@@ -497,23 +501,24 @@ run_exp_coro() {
     local workload="ycsbc"
     local threads_list=(1 2 4 8)   # T/CN → 8 / 16 / 32 / 64 total
 
+    # Restart server per (mt, coro, tpc) to avoid session ID collisions.
     for mt in 1 2; do
         for coro in 1 2 3; do
-            local srv_log="${LOG_DIR}/server_${workload}_mt${mt}_coro${coro}.log"
-            local srv_pid
-            start_server "${srv_log}" "${mt}" "${workload}"
-            srv_pid="${_LAST_BG_PID}"
-            wait_for_server "${srv_log}"
-
             for tpc in "${threads_list[@]}"; do
+                local srv_log="${LOG_DIR}/server_${workload}_mt${mt}_coro${coro}_tpc${tpc}.log"
+                local srv_pid
+                start_server "${srv_log}" "${mt}" "${workload}"
+                srv_pid="${_LAST_BG_PID}"
+                wait_for_server "${srv_log}"
+
                 run_experiment \
                     "Fig13 C${coro} MT${mt}" \
                     "${workload}" "${NKEYS}" \
                     8 "${tpc}" "${mt}" "${coro}"
-            done
 
-            kill_server "${srv_pid}"
-            sleep 5
+                kill_server "${srv_pid}"
+                sleep 5
+            done
         done
     done
 }
