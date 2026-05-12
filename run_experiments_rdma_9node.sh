@@ -90,7 +90,7 @@ SERVER_SECONDS=1200   # server lifetime per invocation (>warmup+EXP_SECONDS)
 # If clients time out during the experiment, increase this value.
 SERVER_WARMUP_SECS=300
 
-DEFAULT_COROS=2
+DEFAULT_COROS=8      # coros=8 at 28µs RTT × 64T = ~18 MOPS, sufficient to saturate MT=1–4
 DEFAULT_MEM_THREADS=1
 
 # ─────────────────────────────────────────────────────────────
@@ -489,9 +489,10 @@ run_exp_mt() {
 # ════════════════════════════════════════════════════════════════
 # EXP 3  —  Coroutine Effects  (Paper Fig. 13)
 #
-# Sweeps coroutine count (1, 2, 3) and thread count (1–8 T/CN)
+# Sweeps coroutine count (1, 2, 3, 4, 6, 8) and thread count (1–8 T/CN)
 # for MT=1 and MT=2, reproducing the latency–throughput "hockey stick"
 # curves.  Both MT panels (Fig. 13 left and right) are produced here.
+# NOTE: coros ≥ 3 is needed to saturate the MN at 28µs RTT with 64 threads.
 # ════════════════════════════════════════════════════════════════
 run_exp_coro() {
     log "════════════════════════════════════════════"
@@ -503,7 +504,7 @@ run_exp_coro() {
 
     # Restart server per (mt, coro, tpc) to avoid session ID collisions.
     for mt in 1 2; do
-        for coro in 1 2 3; do
+        for coro in 1 2 3 4 6 8; do
             for tpc in "${threads_list[@]}"; do
                 local srv_log="${LOG_DIR}/server_${workload}_mt${mt}_coro${coro}_tpc${tpc}.log"
                 local srv_pid
